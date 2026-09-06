@@ -170,6 +170,11 @@ async function fetchGoogleBooksMetadata(isbn) {
   }
 }
 
+function authorNeedsCleanup(author) {
+  const value = String(author || "");
+  return /,/.test(value) || /\b\d{4}(?:-\d{0,4})?\b/.test(value);
+}
+
 async function fetchBookMetadata(items) {
   const isbns = [...new Set(
     items.map((item) => String(item.barcode)).filter(isIsbn13)
@@ -178,32 +183,55 @@ async function fetchBookMetadata(items) {
 
   const openLibrary = await fetchOpenLibraryMetadata(isbns);
   const result = {};
-  const missing = [];
+  const enrichTargets = [];
 
   for (const isbn of isbns) {
     const book = openLibrary[`ISBN:${isbn}`];
+
     if (book) {
+      const author = Array.isArray(book.authors)
+        ? book.authors.map((authorItem) => authorItem.name).filter(Boolean).join(" / ")
+        : "";
+      const coverUrl = book.cover?.medium || book.cover?.small || "";
+
       result[isbn] = {
         title: book.title || "",
-        author: Array.isArray(book.authors)
-          ? book.authors.map((authorItem) => authorItem.name).filter(Boolean).join(" / ")
-          : "",
-        coverUrl: book.cover?.medium || book.cover?.small || "",
+        author,
+        coverUrl,
       };
+
+      // 「見つかった」だけで終了しない。
+      // 表紙が無い、または著者表記が図書館向けなら補助データを取りに行く。
+      if (!coverUrl || !author || authorNeedsCleanup(author)) {
+        enrichTargets.push(isbn);
+      }
     } else {
-      missing.push(isbn);
+      enrichTargets.push(isbn);
     }
   }
 
-  // 初号機ではOpen Libraryにない日本語本をGoogle Booksで補助。
-  // 一度に大量通信しないよう最大12冊までに制限する。
-  const fallbackTargets = missing.slice(0, 12);
+  // openBD / Google Books補助層を通す。
+  // 初号機なので一度に最大12冊まで。
+  const fallbackTargets = [...new Set(enrichTargets)].slice(0, 12);
   const fallbackResults = await Promise.all(
     fallbackTargets.map(async (isbn) => [isbn, await fetchGoogleBooksMetadata(isbn)])
   );
 
   for (const [isbn, metadata] of fallbackResults) {
-    if (metadata) result[isbn] = metadata;
+    if (!metadata) continue;
+
+    const current = result[isbn] || {
+      title: "",
+      author: "",
+      coverUrl: "",
+    };
+
+    result[isbn] = {
+      title: current.title || metadata.title || "",
+      // 補助層のopenBD側で人間向け表記へ整えているので優先する。
+      author: metadata.author || current.author || "",
+      coverUrl: current.coverUrl || metadata.coverUrl || "",
+    };
   }
 
   return result;
