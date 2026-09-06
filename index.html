@@ -40,22 +40,68 @@
       font-weight: 700;
       background: #111;
       color: #fff;
+      cursor: pointer;
     }
     button.secondary { margin-top: 12px; background: #ececec; color: #111; }
-    .status { margin-top: 18px; padding: 18px; border-radius: 16px; background: #f1f1f1; text-align: center; }
+    button.small {
+      width: 52px;
+      height: 52px;
+      padding: 0;
+      border-radius: 14px;
+      font-size: 26px;
+    }
+    .status {
+      margin-top: 18px;
+      padding: 18px;
+      border-radius: 16px;
+      background: #f1f1f1;
+      text-align: center;
+    }
     .status strong { display: block; font-size: 22px; margin-bottom: 8px; }
-    .barcode { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; color: #555; word-break: break-all; }
+    .barcode {
+      margin-top: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 16px;
+      color: #555;
+      word-break: break-all;
+    }
     .ok { background: #e8f7ea; }
+    .warn { background: #fff4d8; }
     .ng { background: #f3f3f3; }
     .error { background: #fff0f0; }
     .hidden { display: none !important; }
+    .state-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .state-item {
+      border-radius: 14px;
+      background: #f3f3f3;
+      padding: 14px 10px;
+      text-align: center;
+    }
+    .state-item span { display: block; color: #666; font-size: 13px; }
+    .state-item strong { display: block; margin-top: 4px; font-size: 28px; }
+    .qty-label { margin: 16px 0 8px; text-align: center; color: #666; font-size: 14px; }
+    .qty-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      margin-bottom: 16px;
+    }
+    #qtyValue { min-width: 42px; text-align: center; font-size: 26px; font-weight: 800; }
     .note { margin: 18px 4px 0; color: #666; font-size: 13px; line-height: 1.6; }
     @media (prefers-color-scheme: dark) {
       body { background: #0f0f0f; color: #fff; }
       .card { background: #181818; }
-      .sub, .note, .barcode { color: #aaa; }
-      .status, .ng { background: #262626; }
+      .sub, .note, .barcode, .qty-label { color: #aaa; }
+      .status, .ng, .state-item { background: #262626; }
+      .state-item span { color: #aaa; }
       .ok { background: #17391f; }
+      .warn { background: #443712; }
       .error { background: #3b1b1b; }
       button { background: #fff; color: #111; }
       button.secondary { background: #2d2d2d; color: #fff; }
@@ -65,7 +111,7 @@
 <body>
   <main>
     <h1>これ持ってる？</h1>
-    <p class="sub">バーコードを向けるだけで確認します。</p>
+    <p class="sub">バーコードを向けるだけで、家の状態を確認します。</p>
 
     <section class="card">
       <button id="startBtn">バーコードを確認する</button>
@@ -76,10 +122,32 @@
         <span>ボタンを押してカメラを起動してください。</span>
       </div>
 
-      <button id="againBtn" class="secondary hidden">もう一度確認する</button>
+      <div id="purchasePanel" class="hidden">
+        <div class="state-grid">
+          <div class="state-item">
+            <span>すでに持っている</span>
+            <strong id="ownedQty">0</strong>
+          </div>
+          <div class="state-item">
+            <span>購入予定</span>
+            <strong id="plannedQty">0</strong>
+          </div>
+        </div>
+
+        <div class="qty-label">今回の購入予定数量</div>
+        <div class="qty-row">
+          <button id="minusBtn" class="small secondary" type="button">−</button>
+          <div id="qtyValue">1</div>
+          <button id="plusBtn" class="small secondary" type="button">＋</button>
+        </div>
+
+        <button id="purchaseBtn" type="button">購入予定に入れる</button>
+      </div>
+
+      <button id="againBtn" class="secondary hidden">別の商品を確認する</button>
     </section>
 
-    <p class="note">写真は保存しません。読み取ったバーコード番号だけを照合します。</p>
+    <p class="note">写真は保存しません。読み取ったバーコード番号と購入状態だけを共有します。</p>
   </main>
   <script src="./app.js"></script>
 </body>
