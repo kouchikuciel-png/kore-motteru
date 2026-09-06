@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111111" />
+  <title>本を登録する</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#f5f5f5; color:#111; }
+    main { width:min(100%,620px); margin:0 auto; min-height:100dvh; padding:max(24px,env(safe-area-inset-top)) 18px max(28px,env(safe-area-inset-bottom)); }
+    h1 { margin:8px 0 6px; font-size:30px; }
+    .sub,.note { color:#666; line-height:1.6; }
+    .card { background:#fff; border-radius:20px; padding:18px; box-shadow:0 2px 14px rgba(0,0,0,.08); }
+    #reader { width:100%; overflow:hidden; border-radius:16px; }
+    #reader video { border-radius:16px; }
+    button { width:100%; border:0; border-radius:14px; padding:16px 18px; font-size:18px; font-weight:700; background:#111; color:#fff; cursor:pointer; }
+    button.secondary { margin-top:12px; background:#ececec; color:#111; }
+    button:disabled { opacity:.55; }
+    .status { margin-top:16px; padding:18px; border-radius:16px; background:#f1f1f1; text-align:center; }
+    .status strong { display:block; font-size:22px; margin-bottom:8px; }
+    .barcode { margin-top:8px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#666; word-break:break-all; }
+    .ok { background:#e8f7ea; }
+    .warn { background:#fff4d8; }
+    .error { background:#fff0f0; }
+    .hidden { display:none !important; }
+    .ocr-help { margin-top:14px; padding:14px; border-radius:14px; background:#f3f3f3; color:#666; line-height:1.55; font-size:14px; }
+    canvas { display:none; }
+    @media (prefers-color-scheme: dark) {
+      body { background:#0f0f0f; color:#fff; }
+      .card { background:#181818; }
+      .sub,.note,.barcode,.ocr-help { color:#aaa; }
+      .status,.ocr-help { background:#262626; }
+      .ok { background:#17391f; }
+      .warn { background:#443712; }
+      .error { background:#3b1b1b; }
+      button { background:#fff; color:#111; }
+      button.secondary { background:#2d2d2d; color:#fff; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>本を登録する</h1>
+    <p class="sub">本をカメラに向けるだけ。バーコードがあれば自動で読みます。</p>
+
+    <section class="card">
+      <button id="startBtn" type="button">カメラで登録する</button>
+      <div id="reader" class="hidden"></div>
+
+      <button id="ocrBtn" class="secondary hidden" type="button">バーコードがない → ISBN文字を読む</button>
+      <div id="ocrHelp" class="ocr-help hidden">「ISBN978-4-19-862573-3」のようなISBN行を、画面中央に大きく映して押してください。</div>
+
+      <div id="status" class="status">
+        <strong>準備OK</strong>
+        <span>カメラを起動してください。</span>
+      </div>
+
+      <button id="againBtn" class="secondary hidden" type="button">続けて登録する</button>
+    </section>
+
+    <p class="note">写真そのものは保存しません。ISBN文字認識は端末上で行い、登録する番号だけを送信します。</p>
+    <canvas id="captureCanvas"></canvas>
+  </main>
+  <script src="./owner.js"></script>
+</body>
+</html>
