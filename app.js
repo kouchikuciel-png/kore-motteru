@@ -5,10 +5,20 @@ const startBtn = document.getElementById("startBtn");
 const againBtn = document.getElementById("againBtn");
 const reader = document.getElementById("reader");
 const statusBox = document.getElementById("status");
+const purchasePanel = document.getElementById("purchasePanel");
+const purchaseBtn = document.getElementById("purchaseBtn");
+const minusBtn = document.getElementById("minusBtn");
+const plusBtn = document.getElementById("plusBtn");
+const qtyValue = document.getElementById("qtyValue");
+const ownedQty = document.getElementById("ownedQty");
+const plannedQty = document.getElementById("plannedQty");
 
 let scanner = null;
 let scannerStarted = false;
 let busy = false;
+let currentBarcode = null;
+let currentState = null;
+let quantity = 1;
 
 function getShareToken() {
   const raw = window.location.hash.replace(/^#/, "");
@@ -17,8 +27,27 @@ function getShareToken() {
   const params = new URLSearchParams(raw);
   if (params.has("token")) return params.get("token");
 
-  // #<token> 形式も一応受け付ける
   return raw;
+}
+
+function getOrCreateBuyerKey() {
+  const storageKey = "kore-motteru-buyer-key";
+  let key = localStorage.getItem(storageKey);
+  if (key) return key;
+
+  key = self.crypto?.randomUUID?.() ||
+    `buyer-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  localStorage.setItem(storageKey, key);
+  return key;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function setStatus(title, text, kind = "") {
@@ -38,30 +67,15 @@ function setBarcodeStatus(title, text, barcode, kind = "") {
   `;
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-async function checkBarcode(token, barcode) {
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/rpc/check_household_barcode`,
-    {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_PUBLISHABLE_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        p_token: token,
-        p_barcode: barcode,
-      }),
-    }
-  );
+async function callRpc(name, body) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const detail = await response.text();
@@ -71,22 +85,116 @@ async function checkBarcode(token, barcode) {
   return await response.json();
 }
 
+function getProductState(token, barcode) {
+  return callRpc("get_household_product_state", {
+    p_token: token,
+    p_barcode: barcode,
+  });
+}
+
+function addPurchasePlan(token, barcode, qty) {
+  return callRpc("add_purchase_plan", {
+    p_token: token,
+    p_barcode: barcode,
+    p_buyer_key: getOrCreateBuyerKey(),
+    p_buyer_label: null,
+    p_quantity: qty,
+    p_visibility: "GIFT_SECRET",
+  });
+}
+
 async function stopScannerQuietly() {
   if (!scanner || !scannerStarted) return;
   try {
     await scanner.stop();
   } catch (_) {
-    // 画面遷移や停止競合では無視
+    // 停止競合は無視
   }
   scannerStarted = false;
+}
+
+function hidePurchasePanel() {
+  purchasePanel.classList.add("hidden");
+}
+
+function renderProductState(barcode, state) {
+  currentBarcode = barcode;
+  currentState = state;
+  quantity = 1;
+  qtyValue.textContent = String(quantity);
+  ownedQty.textContent = String(state.owned_quantity ?? 0);
+  plannedQty.textContent = String(state.planned_quantity ?? 0);
+
+  const duplicate = Boolean(state.duplicate);
+
+  if (duplicate) {
+    setBarcodeStatus(
+      "重複しています",
+      "すでに所有、または購入予定があります。それでも購入できます。",
+      barcode,
+      "warn"
+    );
+    purchaseBtn.textContent = "それでも購入予定に入れる";
+  } else {
+    setBarcodeStatus(
+      "重複はありません",
+      "現在、この商品は所有・購入予定ともにありません。",
+      barcode,
+      "ok"
+    );
+    purchaseBtn.textContent = "購入予定に入れる";
+  }
+
+  purchasePanel.classList.remove("hidden");
+  againBtn.textContent = duplicate ? "やめる・別の商品を確認する" : "別の商品を確認する";
+  againBtn.classList.remove("hidden");
+}
+
+async function handleDecodedBarcode(decodedText) {
+  if (busy) return;
+  busy = true;
+
+  const token = getShareToken();
+  const barcode = String(decodedText).trim();
+
+  await stopScannerQuietly();
+  reader.classList.add("hidden");
+  hidePurchasePanel();
+  setBarcodeStatus("確認中…", "家の状態を確認しています。", barcode);
+
+  try {
+    const state = await getProductState(token, barcode);
+
+    if (!state || state.valid_token !== true) {
+      setBarcodeStatus(
+        "共有リンクが無効です",
+        "新しい共有リンクを開いて、もう一度お試しください。",
+        barcode,
+        "error"
+      );
+      againBtn.classList.add("hidden");
+      return;
+    }
+
+    renderProductState(barcode, state);
+  } catch (error) {
+    console.error(error);
+    setBarcodeStatus(
+      "確認できませんでした",
+      "通信状態を確認して、もう一度お試しください。",
+      barcode,
+      "error"
+    );
+    againBtn.classList.remove("hidden");
+  }
 }
 
 async function startScanner() {
   const token = getShareToken();
   if (!token) {
     setStatus(
-      "共有リンクが無効です",
-      "このページは家庭から送られた共有リンクで開いてください。",
+      "共有リンクが必要です",
+      "家庭から届いた専用リンクを開いてください。",
       "error"
     );
     return;
@@ -102,6 +210,9 @@ async function startScanner() {
   }
 
   busy = false;
+  currentBarcode = null;
+  currentState = null;
+  hidePurchasePanel();
   againBtn.classList.add("hidden");
   startBtn.classList.add("hidden");
   reader.classList.remove("hidden");
@@ -125,47 +236,9 @@ async function startScanner() {
         qrbox: { width: 300, height: 130 },
         aspectRatio: 1.777778,
       },
-      async (decodedText) => {
-        if (busy) return;
-        busy = true;
-
-        const barcode = String(decodedText).trim();
-        await stopScannerQuietly();
-        reader.classList.add("hidden");
-        setBarcodeStatus("照合中…", "少しだけ待ってください。", barcode);
-
-        try {
-          const registered = await checkBarcode(token, barcode);
-
-          if (registered === true) {
-            setBarcodeStatus(
-              "登録されています",
-              "この商品はこの家庭に登録されています。",
-              barcode,
-              "ok"
-            );
-          } else {
-            setBarcodeStatus(
-              "登録されていません",
-              "このバーコードはこの家庭に登録されていません。",
-              barcode,
-              "ng"
-            );
-          }
-        } catch (error) {
-          console.error(error);
-          setBarcodeStatus(
-            "照合できませんでした",
-            "通信状態を確認して、もう一度お試しください。",
-            barcode,
-            "error"
-          );
-        } finally {
-          againBtn.classList.remove("hidden");
-        }
-      },
+      handleDecodedBarcode,
       () => {
-        // 読み取り途中のフレーム失敗は正常なので表示しない
+        // 読み取り途中の失敗フレームは正常
       }
     );
     scannerStarted = true;
@@ -180,6 +253,60 @@ async function startScanner() {
     );
   }
 }
+
+minusBtn.addEventListener("click", () => {
+  quantity = Math.max(1, quantity - 1);
+  qtyValue.textContent = String(quantity);
+});
+
+plusBtn.addEventListener("click", () => {
+  quantity += 1;
+  qtyValue.textContent = String(quantity);
+});
+
+purchaseBtn.addEventListener("click", async () => {
+  const token = getShareToken();
+  if (!token || !currentBarcode) return;
+
+  purchaseBtn.disabled = true;
+  purchaseBtn.textContent = "追加中…";
+
+  try {
+    const result = await addPurchasePlan(token, currentBarcode, quantity);
+
+    if (!result || result.valid_token !== true) {
+      hidePurchasePanel();
+      setBarcodeStatus(
+        "共有リンクが無効です",
+        "新しい共有リンクを開いて、もう一度お試しください。",
+        currentBarcode,
+        "error"
+      );
+      return;
+    }
+
+    plannedQty.textContent = String(result.planned_quantity_after ?? 0);
+    setBarcodeStatus(
+      "購入予定に追加しました",
+      `数量 ${quantity} を登録しました。`,
+      currentBarcode,
+      "ok"
+    );
+    hidePurchasePanel();
+    againBtn.textContent = "別の商品を確認する";
+    againBtn.classList.remove("hidden");
+  } catch (error) {
+    console.error(error);
+    setBarcodeStatus(
+      "追加できませんでした",
+      "通信状態を確認して、もう一度お試しください。",
+      currentBarcode,
+      "error"
+    );
+  } finally {
+    purchaseBtn.disabled = false;
+  }
+});
 
 startBtn.addEventListener("click", startScanner);
 againBtn.addEventListener("click", startScanner);
