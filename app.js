@@ -1,6 +1,16 @@
 const SUPABASE_URL = "https://dnxllbdagnnjsnadlqly.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_YCQsOS8F6kME99vOsabvUg_R6pr5E54";
 
+const ownedView = document.getElementById("ownedView");
+const scanView = document.getElementById("scanView");
+const scanNavBtn = document.getElementById("scanNavBtn");
+const backBtn = document.getElementById("backBtn");
+const ownedList = document.getElementById("ownedList");
+const ownedLoading = document.getElementById("ownedLoading");
+const ownedEmpty = document.getElementById("ownedEmpty");
+const ownedError = document.getElementById("ownedError");
+const ownedCount = document.getElementById("ownedCount");
+
 const startBtn = document.getElementById("startBtn");
 const againBtn = document.getElementById("againBtn");
 const reader = document.getElementById("reader");
@@ -103,6 +113,112 @@ function addPurchasePlan(token, barcode, qty) {
   });
 }
 
+function getOwnedItems(token) {
+  return callRpc("get_household_owned_items", {
+    p_token: token,
+  });
+}
+
+function isIsbn13(barcode) {
+  return /^97[89]\d{10}$/.test(String(barcode));
+}
+
+async function fetchOpenLibraryMetadata(items) {
+  const isbns = items
+    .map((item) => String(item.barcode))
+    .filter(isIsbn13);
+
+  if (isbns.length === 0) return {};
+
+  const keys = isbns.map((isbn) => `ISBN:${isbn}`).join(",");
+  const url = `https://openlibrary.org/api/books?bibkeys=${encodeURIComponent(keys)}&jscmd=data&format=json`;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return {};
+    const data = await response.json();
+    return data || {};
+  } catch (error) {
+    console.warn("Open Library metadata unavailable", error);
+    return {};
+  }
+}
+
+function renderOwnedItems(items, bookMetadata = {}) {
+  ownedLoading.classList.add("hidden");
+  ownedError.classList.add("hidden");
+  ownedEmpty.classList.toggle("hidden", items.length !== 0);
+  ownedList.classList.toggle("hidden", items.length === 0);
+  ownedList.innerHTML = "";
+
+  const totalQuantity = items.reduce(
+    (sum, item) => sum + Number(item.quantity || 0),
+    0
+  );
+  ownedCount.textContent = items.length
+    ? `${items.length}種類・合計${totalQuantity}個`
+    : "";
+
+  for (const item of items) {
+    const barcode = String(item.barcode);
+    const book = bookMetadata[`ISBN:${barcode}`] || null;
+    const title = book?.title || (isIsbn13(barcode) ? "絵本・書籍" : "商品");
+    const author = Array.isArray(book?.authors)
+      ? book.authors.map((authorItem) => authorItem.name).filter(Boolean).join(" / ")
+      : "";
+    const coverUrl = book?.cover?.medium || book?.cover?.small || "";
+
+    const article = document.createElement("article");
+    article.className = "owned-item";
+    article.innerHTML = `
+      <div class="owned-cover">
+        ${coverUrl
+          ? `<img src="${escapeHtml(coverUrl)}" alt="${escapeHtml(title)}の表紙" loading="lazy" />`
+          : `<span aria-hidden="true">${isIsbn13(barcode) ? "📚" : "📦"}</span>`}
+      </div>
+      <div class="owned-body">
+        <div class="owned-title">${escapeHtml(title)}</div>
+        ${author ? `<div class="owned-author">${escapeHtml(author)}</div>` : ""}
+        <div class="owned-meta">${escapeHtml(barcode)} ・ ×${escapeHtml(item.quantity ?? 1)}</div>
+      </div>
+    `;
+    ownedList.appendChild(article);
+  }
+}
+
+async function loadOwnedItems() {
+  const token = getShareToken();
+
+  ownedList.classList.add("hidden");
+  ownedEmpty.classList.add("hidden");
+  ownedError.classList.add("hidden");
+  ownedLoading.classList.remove("hidden");
+  ownedCount.textContent = "";
+
+  if (!token) {
+    ownedLoading.classList.add("hidden");
+    ownedError.classList.remove("hidden");
+    return;
+  }
+
+  try {
+    const result = await getOwnedItems(token);
+    if (!result || result.valid_token !== true) {
+      ownedLoading.classList.add("hidden");
+      ownedError.classList.remove("hidden");
+      return;
+    }
+
+    const items = Array.isArray(result.items) ? result.items : [];
+    const metadata = await fetchOpenLibraryMetadata(items);
+    renderOwnedItems(items, metadata);
+  } catch (error) {
+    console.error(error);
+    ownedLoading.classList.add("hidden");
+    ownedError.classList.remove("hidden");
+  }
+}
+
 async function stopScannerQuietly() {
   if (!scanner || !scannerStarted) return;
   try {
@@ -115,6 +231,29 @@ async function stopScannerQuietly() {
 
 function hidePurchasePanel() {
   purchasePanel.classList.add("hidden");
+}
+
+function showOwnedView() {
+  stopScannerQuietly();
+  reader.classList.add("hidden");
+  scanView.classList.add("hidden");
+  ownedView.classList.remove("hidden");
+  loadOwnedItems();
+}
+
+function showScanView() {
+  ownedView.classList.add("hidden");
+  scanView.classList.remove("hidden");
+  busy = false;
+  currentBarcode = null;
+  currentState = null;
+  quantity = 1;
+  qtyValue.textContent = "1";
+  hidePurchasePanel();
+  againBtn.classList.add("hidden");
+  startBtn.classList.remove("hidden");
+  reader.classList.add("hidden");
+  setStatus("準備OK", "ボタンを押してカメラを起動してください。");
 }
 
 function renderProductState(barcode, state) {
@@ -308,6 +447,8 @@ purchaseBtn.addEventListener("click", async () => {
   }
 });
 
+scanNavBtn.addEventListener("click", showScanView);
+backBtn.addEventListener("click", showOwnedView);
 startBtn.addEventListener("click", startScanner);
 againBtn.addEventListener("click", startScanner);
 
@@ -315,10 +456,4 @@ window.addEventListener("pagehide", () => {
   stopScannerQuietly();
 });
 
-if (!getShareToken()) {
-  setStatus(
-    "共有リンクが必要です",
-    "家庭から届いた専用リンクを開いてください。",
-    "error"
-  );
-}
+showOwnedView();
