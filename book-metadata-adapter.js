@@ -1,6 +1,6 @@
 // 日本語書籍向けメタデータ補助層
 // app.js が Google Books を呼ぶ直前に openBD を優先して照会し、
-// 取得できた場合は Google Books 互換のレスポンスへ変換する。
+// openBD の書誌情報と Google Books の表紙を必要に応じて合成する。
 (() => {
   const originalFetch = window.fetch.bind(window);
 
@@ -20,7 +20,27 @@
     }
   }
 
-  async function fetchOpenBdAsGoogleBooks(isbn) {
+  function normalizeJapaneseAuthor(raw) {
+    const value = String(raw || "").trim();
+    if (!value) return "";
+
+    const parts = value
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .filter((part) => !/^\d{4}(?:-\d{0,4})?$/.test(part));
+
+    if (parts.length >= 2) {
+      return `${parts[0]} ${parts[1]}`.trim();
+    }
+
+    return value
+      .replace(/,?\s*\d{4}(?:-\d{0,4})?\s*$/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  async function fetchOpenBd(isbn) {
     try {
       const response = await originalFetch(
         `https://api.openbd.jp/v1/get?isbn=${encodeURIComponent(isbn)}`,
@@ -33,45 +53,85 @@
       const summary = record?.summary;
       if (!summary?.title) return null;
 
-      const cover = String(summary.cover || "").replace(/^http:/, "https:");
-      const authors = summary.author ? [summary.author] : [];
-
-      return new Response(
-        JSON.stringify({
-          totalItems: 1,
-          items: [
-            {
-              volumeInfo: {
-                title: summary.title || "",
-                authors,
-                publisher: summary.publisher || "",
-                imageLinks: cover
-                  ? { thumbnail: cover, smallThumbnail: cover }
-                  : undefined,
-              },
-            },
-          ],
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
+      return {
+        title: summary.title || "",
+        author: normalizeJapaneseAuthor(summary.author),
+        publisher: summary.publisher || "",
+        coverUrl: String(summary.cover || "").replace(/^http:/, "https:"),
+      };
     } catch (error) {
       console.warn("openBD metadata unavailable", isbn, error);
       return null;
     }
   }
 
+  async function fetchGoogleBooksVolume(input, init) {
+    try {
+      const response = await originalFetch(input, init);
+      if (!response.ok) return null;
+      const data = await response.clone().json();
+      const volume = data?.items?.[0]?.volumeInfo;
+      if (!volume) return null;
+
+      const coverUrl = String(
+        volume.imageLinks?.thumbnail ||
+        volume.imageLinks?.smallThumbnail ||
+        ""
+      ).replace(/^http:/, "https:");
+
+      return {
+        title: volume.title || "",
+        author: Array.isArray(volume.authors) ? volume.authors.join(" / ") : "",
+        publisher: volume.publisher || "",
+        coverUrl,
+      };
+    } catch (error) {
+      console.warn("Google Books metadata unavailable", error);
+      return null;
+    }
+  }
+
+  function toGoogleBooksResponse(metadata) {
+    const cover = metadata.coverUrl || "";
+    return new Response(
+      JSON.stringify({
+        totalItems: 1,
+        items: [
+          {
+            volumeInfo: {
+              title: metadata.title || "",
+              authors: metadata.author ? [metadata.author] : [],
+              publisher: metadata.publisher || "",
+              imageLinks: cover
+                ? { thumbnail: cover, smallThumbnail: cover }
+                : undefined,
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
   window.fetch = async function patchedFetch(input, init) {
     const isbn = extractIsbnFromGoogleBooksUrl(input);
     if (!isbn) return originalFetch(input, init);
 
-    // 日本語書籍では openBD を先に試す。
-    const openBdResponse = await fetchOpenBdAsGoogleBooks(isbn);
-    if (openBdResponse) return openBdResponse;
+    const openBd = await fetchOpenBd(isbn);
+    if (!openBd) {
+      return originalFetch(input, init);
+    }
 
-    // openBD に無ければ従来どおり Google Books へ。
-    return originalFetch(input, init);
+    // openBDに表紙がなければ、Google Booksから画像だけ補完する。
+    if (!openBd.coverUrl) {
+      const google = await fetchGoogleBooksVolume(input, init);
+      if (google?.coverUrl) openBd.coverUrl = google.coverUrl;
+      if (!openBd.author && google?.author) openBd.author = google.author;
+    }
+
+    return toGoogleBooksResponse(openBd);
   };
 })();
