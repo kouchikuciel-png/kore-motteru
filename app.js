@@ -11,6 +11,14 @@ const ownedEmpty = document.getElementById("ownedEmpty");
 const ownedError = document.getElementById("ownedError");
 const ownedCount = document.getElementById("ownedCount");
 
+const detailOverlay = document.getElementById("detailOverlay");
+const detailCover = document.getElementById("detailCover");
+const detailTitle = document.getElementById("detailTitle");
+const detailAuthor = document.getElementById("detailAuthor");
+const detailMeta = document.getElementById("detailMeta");
+const detailCheckBtn = document.getElementById("detailCheckBtn");
+const detailCloseBtn = document.getElementById("detailCloseBtn");
+
 const startBtn = document.getElementById("startBtn");
 const againBtn = document.getElementById("againBtn");
 const reader = document.getElementById("reader");
@@ -28,6 +36,7 @@ let scannerStarted = false;
 let busy = false;
 let currentBarcode = null;
 let currentState = null;
+let currentDetailItem = null;
 let quantity = 1;
 
 function getShareToken() {
@@ -123,11 +132,7 @@ function isIsbn13(barcode) {
   return /^97[89]\d{10}$/.test(String(barcode));
 }
 
-async function fetchOpenLibraryMetadata(items) {
-  const isbns = items
-    .map((item) => String(item.barcode))
-    .filter(isIsbn13);
-
+async function fetchOpenLibraryMetadata(isbns) {
   if (isbns.length === 0) return {};
 
   const keys = isbns.map((isbn) => `ISBN:${isbn}`).join(",");
@@ -136,12 +141,89 @@ async function fetchOpenLibraryMetadata(items) {
   try {
     const response = await fetch(url);
     if (!response.ok) return {};
-    const data = await response.json();
-    return data || {};
+    return (await response.json()) || {};
   } catch (error) {
     console.warn("Open Library metadata unavailable", error);
     return {};
   }
+}
+
+async function fetchGoogleBooksMetadata(isbn) {
+  const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(`isbn:${isbn}`)}&maxResults=1&printType=books`;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const volume = data?.items?.[0]?.volumeInfo;
+    if (!volume) return null;
+
+    const imageUrl = volume.imageLinks?.thumbnail || volume.imageLinks?.smallThumbnail || "";
+    return {
+      title: volume.title || "",
+      author: Array.isArray(volume.authors) ? volume.authors.join(" / ") : "",
+      coverUrl: imageUrl.replace(/^http:/, "https:"),
+    };
+  } catch (error) {
+    console.warn("Google Books metadata unavailable", isbn, error);
+    return null;
+  }
+}
+
+async function fetchBookMetadata(items) {
+  const isbns = [...new Set(
+    items.map((item) => String(item.barcode)).filter(isIsbn13)
+  )];
+  if (isbns.length === 0) return {};
+
+  const openLibrary = await fetchOpenLibraryMetadata(isbns);
+  const result = {};
+  const missing = [];
+
+  for (const isbn of isbns) {
+    const book = openLibrary[`ISBN:${isbn}`];
+    if (book) {
+      result[isbn] = {
+        title: book.title || "",
+        author: Array.isArray(book.authors)
+          ? book.authors.map((authorItem) => authorItem.name).filter(Boolean).join(" / ")
+          : "",
+        coverUrl: book.cover?.medium || book.cover?.small || "",
+      };
+    } else {
+      missing.push(isbn);
+    }
+  }
+
+  // 初号機ではOpen Libraryにない日本語本をGoogle Booksで補助。
+  // 一度に大量通信しないよう最大12冊までに制限する。
+  const fallbackTargets = missing.slice(0, 12);
+  const fallbackResults = await Promise.all(
+    fallbackTargets.map(async (isbn) => [isbn, await fetchGoogleBooksMetadata(isbn)])
+  );
+
+  for (const [isbn, metadata] of fallbackResults) {
+    if (metadata) result[isbn] = metadata;
+  }
+
+  return result;
+}
+
+function closeOwnedDetail() {
+  currentDetailItem = null;
+  detailOverlay.classList.add("hidden");
+}
+
+function openOwnedDetail(item) {
+  currentDetailItem = item;
+  detailTitle.textContent = item.title;
+  detailAuthor.textContent = item.author || "";
+  detailAuthor.classList.toggle("hidden", !item.author);
+  detailMeta.textContent = `${isIsbn13(item.barcode) ? "ISBN" : "コード"} ${item.barcode} ・ 所有 ×${item.quantity}`;
+  detailCover.innerHTML = item.coverUrl
+    ? `<img src="${escapeHtml(item.coverUrl)}" alt="${escapeHtml(item.title)}の表紙" />`
+    : `<span aria-hidden="true">${isIsbn13(item.barcode) ? "📚" : "📦"}</span>`;
+  detailOverlay.classList.remove("hidden");
 }
 
 function renderOwnedItems(items, bookMetadata = {}) {
@@ -161,15 +243,23 @@ function renderOwnedItems(items, bookMetadata = {}) {
 
   for (const item of items) {
     const barcode = String(item.barcode);
-    const book = bookMetadata[`ISBN:${barcode}`] || null;
+    const book = bookMetadata[barcode] || null;
     const title = book?.title || (isIsbn13(barcode) ? "絵本・書籍" : "商品");
-    const author = Array.isArray(book?.authors)
-      ? book.authors.map((authorItem) => authorItem.name).filter(Boolean).join(" / ")
-      : "";
-    const coverUrl = book?.cover?.medium || book?.cover?.small || "";
+    const author = book?.author || "";
+    const coverUrl = book?.coverUrl || "";
+    const detailItem = {
+      barcode,
+      title,
+      author,
+      coverUrl,
+      quantity: Number(item.quantity || 1),
+    };
 
     const article = document.createElement("article");
     article.className = "owned-item";
+    article.tabIndex = 0;
+    article.setAttribute("role", "button");
+    article.setAttribute("aria-label", `${title}の詳細を開く`);
     article.innerHTML = `
       <div class="owned-cover">
         ${coverUrl
@@ -182,6 +272,15 @@ function renderOwnedItems(items, bookMetadata = {}) {
         <div class="owned-meta">${escapeHtml(barcode)} ・ ×${escapeHtml(item.quantity ?? 1)}</div>
       </div>
     `;
+
+    article.addEventListener("click", () => openOwnedDetail(detailItem));
+    article.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openOwnedDetail(detailItem);
+      }
+    });
+
     ownedList.appendChild(article);
   }
 }
@@ -210,7 +309,7 @@ async function loadOwnedItems() {
     }
 
     const items = Array.isArray(result.items) ? result.items : [];
-    const metadata = await fetchOpenLibraryMetadata(items);
+    const metadata = await fetchBookMetadata(items);
     renderOwnedItems(items, metadata);
   } catch (error) {
     console.error(error);
@@ -235,6 +334,7 @@ function hidePurchasePanel() {
 
 function showOwnedView() {
   stopScannerQuietly();
+  closeOwnedDetail();
   reader.classList.add("hidden");
   scanView.classList.add("hidden");
   ownedView.classList.remove("hidden");
@@ -242,6 +342,7 @@ function showOwnedView() {
 }
 
 function showScanView() {
+  closeOwnedDetail();
   ownedView.classList.add("hidden");
   scanView.classList.remove("hidden");
   busy = false;
@@ -287,6 +388,36 @@ function renderProductState(barcode, state) {
   purchasePanel.classList.remove("hidden");
   againBtn.textContent = duplicate ? "やめる・別の商品を確認する" : "別の商品を確認する";
   againBtn.classList.remove("hidden");
+}
+
+async function checkBarcodeDirectly(barcode) {
+  const token = getShareToken();
+  showScanView();
+  startBtn.classList.add("hidden");
+  setBarcodeStatus("確認中…", "家の状態を確認しています。", barcode);
+
+  try {
+    const state = await getProductState(token, barcode);
+    if (!state || state.valid_token !== true) {
+      setBarcodeStatus(
+        "共有リンクが無効です",
+        "新しい共有リンクを開いて、もう一度お試しください。",
+        barcode,
+        "error"
+      );
+      return;
+    }
+    renderProductState(barcode, state);
+  } catch (error) {
+    console.error(error);
+    setBarcodeStatus(
+      "確認できませんでした",
+      "通信状態を確認して、もう一度お試しください。",
+      barcode,
+      "error"
+    );
+    againBtn.classList.remove("hidden");
+  }
 }
 
 async function handleDecodedBarcode(decodedText) {
@@ -451,6 +582,18 @@ scanNavBtn.addEventListener("click", showScanView);
 backBtn.addEventListener("click", showOwnedView);
 startBtn.addEventListener("click", startScanner);
 againBtn.addEventListener("click", startScanner);
+detailCloseBtn.addEventListener("click", closeOwnedDetail);
+detailCheckBtn.addEventListener("click", () => {
+  if (currentDetailItem) checkBarcodeDirectly(currentDetailItem.barcode);
+});
+detailOverlay.addEventListener("click", (event) => {
+  if (event.target === detailOverlay) closeOwnedDetail();
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !detailOverlay.classList.contains("hidden")) {
+    closeOwnedDetail();
+  }
+});
 
 window.addEventListener("pagehide", () => {
   stopScannerQuietly();
