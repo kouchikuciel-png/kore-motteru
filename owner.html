@@ -52,14 +52,14 @@
 <body>
   <main>
     <h1>本を登録する</h1>
-    <p class="sub">本をカメラに向けるだけ。ISBNバーコードを優先し、見つからなければISBNの印字も自動で探します。</p>
+    <p class="sub">本をカメラに向けるだけ。バーコードを読み取ります。うまく読めないときは、本に印刷された番号も自動で探します。</p>
 
     <section class="card">
       <button id="startBtn" type="button">カメラで登録する</button>
       <div id="reader" class="hidden"></div>
 
-      <button id="ocrBtn" class="secondary hidden" type="button">ISBNをもう一度読む</button>
-      <div id="ocrHelp" class="ocr-help hidden">バーコードがない本は「ISBN978-4-19-862573-3」のようなISBN行を画面中央に大きく映してください。数秒後に自動で文字認識します。</div>
+      <button id="ocrBtn" class="secondary hidden" type="button">本の番号をもう一度読む</button>
+      <div id="ocrHelp" class="ocr-help hidden">バーコードが読めないときは、本の裏にある「978」から始まる13桁の番号を画面中央に大きく映してください。数秒後に自動で読み取ります。</div>
 
       <div id="status" class="status">
         <strong>準備OK</strong>
@@ -79,7 +79,7 @@
       <button id="againBtn" class="secondary hidden" type="button">別のものを読み取る</button>
     </section>
 
-    <p class="note">写真そのものは保存しません。ISBN文字認識は端末上で行い、登録する番号と数量だけを送信します。</p>
+    <p class="note">写真そのものは保存しません。本に印刷された番号の読み取りは端末上で行い、登録する番号と数量だけを送信します。</p>
     <canvas id="captureCanvas"></canvas>
   </main>
   <script src="./owner.js"></script>
