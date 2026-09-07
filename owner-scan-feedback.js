@@ -12,15 +12,6 @@
   let rejectedResetTimer = null;
   let lastRejectedBarcode = "";
 
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
   function isValidIsbn13(isbn) {
     if (!/^97[89]\d{10}$/.test(isbn)) return false;
     const digits = isbn.split("").map(Number);
@@ -35,8 +26,8 @@
   function setRejectedStatus(barcode) {
     if (!reader || !statusBox) return;
 
-    // ISBN以外のEANを読めた時点で、OCR待ちへは進めない。
-    // ユーザーが上側の978/979 ISBNへカメラを動かすまでバーコード読取を継続する。
+    // 内部ではISBNかどうかを判定するが、利用者には専門用語を出さない。
+    // 「別のバーコード」とだけ伝え、カメラは止めずに正しい方へ誘導する。
     if (typeof window.clearAutoOcrTimer === "function") {
       window.clearAutoOcrTimer();
     }
@@ -46,9 +37,8 @@
     if (lastRejectedBarcode !== barcode) {
       statusBox.className = "status error";
       statusBox.innerHTML = `
-        <strong>ISBNではありません</strong>
-        <span>このバーコードは登録しません。上の978 / 979から始まるISBNバーコードに向けてください。</span>
-        <div class="barcode">${escapeHtml(barcode)}</div>
+        <strong>別のバーコードです</strong>
+        <span>このバーコードでは登録できません。近くにある、もう一つのバーコードをカメラに向けてください。</span>
       `;
       lastRejectedBarcode = barcode;
     }
@@ -62,7 +52,7 @@
         statusBox.className = "status";
         statusBox.innerHTML = `
           <strong>読み取り中</strong>
-          <span>978 / 979から始まるISBNバーコードを枠内に入れてください。</span>
+          <span>もう一つのバーコードを枠の中に入れてください。</span>
         `;
       }
     }, 900);
