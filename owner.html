@@ -51,25 +51,26 @@
     .tutorial-close { position:absolute; right:14px; top:14px; width:42px; height:42px; padding:0; border-radius:50%; background:#ececec; color:#111; font-size:24px; }
     .tutorial-demo { position:relative; height:250px; margin:8px 0 18px; overflow:hidden; border-radius:20px; background:#171717; }
     .demo-phone { position:absolute; inset:16px 24px; border:4px solid #555; border-radius:24px; overflow:hidden; background:#252525; }
-    .demo-book { position:absolute; left:50%; top:50%; width:220px; height:170px; transform:translate(-50%,-50%) rotate(-2deg); border-radius:8px; background:#f7f0df; box-shadow:0 8px 20px rgba(0,0,0,.25); }
-    .demo-barcode { position:absolute; left:42px; width:136px; height:36px; background:repeating-linear-gradient(90deg,#111 0 3px,transparent 3px 6px,#111 6px 8px,transparent 8px 12px); }
-    .demo-barcode.one { top:38px; }
-    .demo-barcode.two { top:94px; }
-    .demo-number { position:absolute; left:40px; right:40px; bottom:15px; text-align:center; color:#333; font:700 14px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:2px; }
-    .demo-scan { position:absolute; left:50%; top:48px; width:172px; height:58px; transform:translateX(-50%); border:5px solid #56c73a; border-radius:10px; animation:scanTarget 5.4s ease-in-out infinite; }
+    .demo-book { position:absolute; left:50%; top:50%; width:236px; height:174px; transform:translate(-50%,-50%); border-radius:8px; background:#f7f0df; box-shadow:0 8px 20px rgba(0,0,0,.25); }
+    .demo-code { position:absolute; left:38px; right:38px; height:66px; }
+    .demo-code.one { top:23px; }
+    .demo-code.two { top:91px; }
+    .demo-barcode { position:absolute; left:0; right:0; top:0; height:35px; background:repeating-linear-gradient(90deg,#111 0 3px,transparent 3px 6px,#111 6px 8px,transparent 8px 12px); }
+    .demo-number { position:absolute; left:0; right:0; top:39px; text-align:center; white-space:nowrap; color:#333; font:700 13px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:1.2px; }
+    .demo-scan { position:absolute; left:50%; top:42px; width:184px; height:58px; transform:translateX(-50%); border:5px solid #56c73a; border-radius:10px; animation:scanTarget 4.8s ease-in-out infinite; }
     .demo-scan::after { content:""; position:absolute; left:9px; right:9px; top:50%; height:2px; background:#56c73a; opacity:.8; }
     .tutorial-caption { min-height:54px; margin:0 0 14px; text-align:center; font-size:18px; font-weight:750; line-height:1.5; }
     .tutorial-caption span { display:block; color:#666; font-size:14px; font-weight:500; }
     .tutorial-check { display:flex; align-items:center; gap:10px; margin:8px 0 16px; font-size:16px; line-height:1.4; }
     .tutorial-check input { width:22px; height:22px; flex:0 0 auto; }
     @keyframes scanTarget {
-      0%, 36% { top:48px; border-color:#56c73a; }
-      45%, 76% { top:104px; border-color:#56c73a; }
-      84%, 100% { top:151px; border-color:#f0b429; }
+      0%, 42% { top:42px; border-color:#56c73a; }
+      55%, 92% { top:110px; border-color:#56c73a; }
+      100% { top:42px; border-color:#56c73a; }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .demo-scan { animation:none; top:72px; }
+      .demo-scan { animation:none; top:42px; }
     }
     @media (prefers-color-scheme: dark) {
       body { background:#0f0f0f; color:#fff; }
@@ -134,9 +135,14 @@
       <div class="tutorial-demo" aria-hidden="true">
         <div class="demo-phone">
           <div class="demo-book">
-            <div class="demo-barcode one"></div>
-            <div class="demo-barcode two"></div>
-            <div class="demo-number">978 4 08 874171 0</div>
+            <div class="demo-code one">
+              <div class="demo-barcode"></div>
+              <div class="demo-number">9784088741710</div>
+            </div>
+            <div class="demo-code two">
+              <div class="demo-barcode"></div>
+              <div class="demo-number">1929979011430</div>
+            </div>
           </div>
           <div class="demo-scan"></div>
         </div>
@@ -153,6 +159,7 @@
   </div>
 
   <script src="./owner.js"></script>
+  <script src="./owner-isbn-compat.js"></script>
   <script src="./owner-scan-feedback.js"></script>
 </body>
 </html>
