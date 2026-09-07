@@ -82,14 +82,7 @@ declare
   v_quantity integer := 0;
   v_created boolean := false;
 begin
-  if p_barcode is null or p_barcode !~ '^[0-9]{8,14}$' then
-    return jsonb_build_object(
-      'valid_token', true,
-      'valid_barcode', false,
-      'created', false
-    );
-  end if;
-
+  -- 先に家主権限を確認する。番号形式に関係なく無効リンクは常に valid_token=false。
   select st.household_id
     into v_household_id
   from public.share_tokens st
@@ -100,6 +93,14 @@ begin
 
   if v_household_id is null then
     return jsonb_build_object('valid_token', false);
+  end if;
+
+  if p_barcode is null or p_barcode !~ '^[0-9]{8,14}$' then
+    return jsonb_build_object(
+      'valid_token', true,
+      'valid_barcode', false,
+      'created', false
+    );
   end if;
 
   insert into public.household_items (
