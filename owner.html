@@ -52,14 +52,14 @@
 <body>
   <main>
     <h1>本を登録する</h1>
-    <p class="sub">本をカメラに向けるだけ。バーコードを読み取ります。うまく読めないときは、本に印刷された番号も自動で探します。</p>
+    <p class="sub">本のうらをカメラに向けてください。バーコードが見えるようにしてください。2つあっても、そのままで大丈夫です。</p>
 
     <section class="card">
       <button id="startBtn" type="button">カメラで登録する</button>
       <div id="reader" class="hidden"></div>
 
-      <button id="ocrBtn" class="secondary hidden" type="button">本の番号をもう一度読む</button>
-      <div id="ocrHelp" class="ocr-help hidden">バーコードが読めないときは、本の裏にある「978」から始まる13桁の番号を画面中央に大きく映してください。数秒後に自動で読み取ります。</div>
+      <button id="ocrBtn" class="secondary hidden" type="button">うまく読めないとき</button>
+      <div id="ocrHelp" class="ocr-help hidden">バーコードが見つからないときは、本のうらの数字が書かれているあたりを画面中央に大きく映してください。そのまま数秒待つと自動で読み取ります。</div>
 
       <div id="status" class="status">
         <strong>準備OK</strong>

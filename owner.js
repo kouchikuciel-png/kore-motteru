@@ -154,7 +154,11 @@ async function submitCode(code, sourceLabel) {
 
   const barcode = String(code || "").replace(/\D/g, "");
   if (!isValidIsbn13(barcode)) {
-    setStatus("ISBNを認識できませんでした", "ISBNのバーコードか印字をもう一度カメラに向けてください。", "error");
+    setStatus(
+      "本の番号を読み取れませんでした",
+      "本のうらをカメラに向けて、バーコードや数字が書かれているあたりを映してください。",
+      "error"
+    );
     resetPendingRegistration();
     showReadyToRepeat();
     return;
@@ -163,7 +167,7 @@ async function submitCode(code, sourceLabel) {
   hideCameraControls();
   quantityPanel.classList.add("hidden");
   againBtn.classList.add("hidden");
-  setStatus("確認中…", `${sourceLabel}からISBNを確認しました。`, "", barcode);
+  setStatus("確認中…", `${sourceLabel}を確認しました。`, "", barcode);
 
   try {
     const result = await getOwnerItemState(token, barcode);
@@ -175,7 +179,12 @@ async function submitCode(code, sourceLabel) {
     }
 
     if (result.valid_barcode === false) {
-      setStatus("登録できないISBNです", "ISBN-13を確認してください。", "error", barcode);
+      setStatus(
+        "登録できない番号です",
+        "本のうらをもう一度カメラに向けてください。",
+        "error",
+        barcode
+      );
       resetPendingRegistration();
       showReadyToRepeat();
       return;
@@ -199,7 +208,7 @@ async function submitCode(code, sourceLabel) {
     } else {
       setStatus(
         "読み取りました",
-        `${sourceLabel}からISBNを確認しました。登録する数量を選んでください。`,
+        `${sourceLabel}を読み取りました。登録する数量を選んでください。`,
         "ok",
         barcode
       );
@@ -251,7 +260,7 @@ async function confirmRegistration() {
     }
 
     if (result.valid_barcode === false || result.valid_quantity === false) {
-      setStatus("登録できませんでした", "ISBNと数量を確認してください。", "error", barcode);
+      setStatus("登録できませんでした", "本の番号と数量を確認してください。", "error", barcode);
       resetPendingRegistration();
       showReadyToRepeat();
       return;
@@ -326,7 +335,7 @@ async function getOcrWorker() {
     const worker = await Tesseract.createWorker("eng", 1, {
       logger: (message) => {
         if (message.status === "recognizing text" && Number.isFinite(message.progress)) {
-          setStatus("ISBNを読んでいます…", `${Math.round(message.progress * 100)}%`);
+          setStatus("本の番号を探しています…", `${Math.round(message.progress * 100)}%`);
         }
       },
     });
@@ -357,7 +366,10 @@ async function recognizeIsbnFromCamera(autoMode = false) {
     busy = false;
     ocrBtn.disabled = false;
     if (autoMode) {
-      setStatus("読み取り中", "本を少し近づけて、ISBNの行を中央に向けてください。");
+      setStatus(
+        "読み取り中",
+        "本のうらを少し近づけて、数字が書かれているあたりを中央に向けてください。"
+      );
       return;
     }
     setStatus("画像を取得できませんでした", "カメラを起動し直してください。", "error");
@@ -366,7 +378,7 @@ async function recognizeIsbnFromCamera(autoMode = false) {
 
   await stopScannerQuietly();
   hideCameraControls();
-  setStatus("ISBNを読んでいます…", "印刷されたISBN番号を自動認識しています。");
+  setStatus("本の番号を探しています…", "そのまま本のうらをカメラに向けてください。");
 
   try {
     const worker = await getOcrWorker();
@@ -378,27 +390,41 @@ async function recognizeIsbnFromCamera(autoMode = false) {
         busy = false;
         ocrBtn.disabled = false;
         await startScanner(false);
-        setStatus("読み取り中", "ISBNバーコードかISBNの行を中央に向けてください。必要ならISBN再読取も使えます。");
+        setStatus(
+          "読み取り中",
+          "本のうらをカメラに向けてください。バーコードが2つあっても大丈夫です。"
+        );
         return;
       }
 
-      setStatus("ISBNを見つけられませんでした", "ISBNの行を中央に大きく映して、もう一度試してください。", "error");
+      setStatus(
+        "番号を見つけられませんでした",
+        "本のうらの、数字が書かれているあたりを大きく映して、もう一度試してください。",
+        "error"
+      );
       showReadyToRepeat();
       return;
     }
 
-    await submitCode(isbn, "ISBN文字");
+    await submitCode(isbn, "本の番号");
   } catch (error) {
     console.error(error);
     if (autoMode) {
       busy = false;
       ocrBtn.disabled = false;
       await startScanner(false);
-      setStatus("読み取り中", "ISBNバーコードを向けてください。ISBN文字は再読取ボタンでも試せます。");
+      setStatus(
+        "読み取り中",
+        "本のうらをカメラに向けてください。バーコードが見えるようにしてください。"
+      );
       return;
     }
 
-    setStatus("ISBNを読めませんでした", "もう一度試すか、ISBNバーコードがある本で確認してください。", "error");
+    setStatus(
+      "本の番号を読めませんでした",
+      "もう一度、本のうらをカメラに向けてください。",
+      "error"
+    );
     showReadyToRepeat();
   } finally {
     busy = false;
@@ -418,7 +444,7 @@ async function handleDecodedBarcode(decodedText) {
   busy = true;
   clearAutoOcrTimer();
   await stopScannerQuietly();
-  await submitCode(barcode, "ISBNバーコード");
+  await submitCode(barcode, "バーコード");
   busy = false;
   updateQuantityControls();
 }
@@ -442,7 +468,10 @@ async function startScanner(resetAuto = true) {
   reader.classList.remove("hidden");
   ocrBtn.classList.remove("hidden");
   ocrHelp.classList.remove("hidden");
-  setStatus("読み取り中", "ISBNバーコードを探しています。見つからなければISBN文字も自動で読みます。");
+  setStatus(
+    "読み取り中",
+    "本のうらをカメラに向けてください。バーコードが2つあっても大丈夫です。"
+  );
 
   if (!scanner) {
     scanner = new Html5Qrcode("reader", {

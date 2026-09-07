@@ -27,7 +27,7 @@
     if (!reader || !statusBox) return;
 
     // 内部ではISBNかどうかを判定するが、利用者には専門用語を出さない。
-    // 「別のバーコード」とだけ伝え、カメラは止めずに正しい方へ誘導する。
+    // 本のうらを見せてもらい、違う方を読んだ時だけもう一方へ誘導する。
     if (typeof window.clearAutoOcrTimer === "function") {
       window.clearAutoOcrTimer();
     }
@@ -38,7 +38,7 @@
       statusBox.className = "status error";
       statusBox.innerHTML = `
         <strong>別のバーコードです</strong>
-        <span>このバーコードでは登録できません。近くにある、もう一つのバーコードをカメラに向けてください。</span>
+        <span>本のうらにバーコードが2つある場合は、近くにあるもう1つのバーコードを映してください。</span>
       `;
       lastRejectedBarcode = barcode;
     }
@@ -52,7 +52,7 @@
         statusBox.className = "status";
         statusBox.innerHTML = `
           <strong>読み取り中</strong>
-          <span>もう一つのバーコードを枠の中に入れてください。</span>
+          <span>本のうらにある、もう1つのバーコードを枠の中に入れてください。</span>
         `;
       }
     }, 900);
