@@ -51,6 +51,36 @@
     return null;
   }
 
+  async function fetchOpenLibrarySearchBook(isbn) {
+    const url = `https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}&limit=1&fields=title,author_name,cover_i`;
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const data = await response.json();
+      const doc = data?.docs?.[0];
+      if (!doc) return null;
+
+      return {
+        title: doc.title || "",
+        author: Array.isArray(doc.author_name) ? doc.author_name.join(" / ") : "",
+        coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : "",
+      };
+    } catch (error) {
+      console.warn("Open Library search unavailable", error);
+      return null;
+    }
+  }
+
+  function mergeMetadata(current, next) {
+    if (!next) return current;
+    return {
+      title: current?.title || next.title || "",
+      author: current?.author || next.author || "",
+      coverUrl: current?.coverUrl || next.coverUrl || "",
+    };
+  }
+
   const originalExtractValidIsbn = typeof extractValidIsbn === "function" ? extractValidIsbn : null;
   if (originalExtractValidIsbn) {
     window.extractValidIsbn = function patchedExtractValidIsbn(text) {
@@ -85,36 +115,29 @@
 
       for (const candidate of candidates) {
         try {
-          const openLibrary = await fetchOpenLibraryBook(candidate);
-          if (openLibrary) {
-            best = {
-              title: best?.title || openLibrary.title || "",
-              author: best?.author || openLibrary.author || "",
-              coverUrl: best?.coverUrl || openLibrary.coverUrl || "",
-            };
-            if (best.title && best.author && best.coverUrl) return best;
-          }
+          best = mergeMetadata(best, await fetchOpenLibraryBook(candidate));
+          if (best?.title && best?.author && best?.coverUrl) return best;
         } catch (_) {}
       }
 
       for (const candidate of candidates) {
         try {
-          const google = await fetchGoogleBooksBook(candidate);
-          if (google) {
-            best = {
-              title: best?.title || google.title || "",
-              author: best?.author || google.author || "",
-              coverUrl: best?.coverUrl || google.coverUrl || "",
-            };
-            if (best.title && best.author && best.coverUrl) return best;
-          }
+          best = mergeMetadata(best, await fetchOpenLibrarySearchBook(candidate));
+          if (best?.title && best?.author && best?.coverUrl) return best;
+        } catch (_) {}
+      }
+
+      for (const candidate of candidates) {
+        try {
+          best = mergeMetadata(best, await fetchGoogleBooksBook(candidate));
+          if (best?.title && best?.author && best?.coverUrl) return best;
         } catch (_) {}
       }
 
       if (best && (best.title || best.author || best.coverUrl)) return best;
 
       // Metadata services occasionally miss older Japanese books even when a cover exists.
-      // Let the image element try Open Library's cover endpoint directly; failures fall back to the book icon.
+      // Let the image element try Open Library's direct cover endpoint; 404 falls back to the book icon.
       return {
         title: "",
         author: "",
