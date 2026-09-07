@@ -12,6 +12,9 @@ const captureCanvas = document.getElementById("captureCanvas");
 let scanner = null;
 let scannerStarted = false;
 let busy = false;
+let autoOcrTimer = null;
+let autoOcrAttempted = false;
+let ocrWorkerPromise = null;
 
 function getShareToken() {
   const raw = window.location.hash.replace(/^#/, "");
@@ -62,7 +65,15 @@ function registerItem(token, barcode) {
   });
 }
 
+function clearAutoOcrTimer() {
+  if (autoOcrTimer) {
+    clearTimeout(autoOcrTimer);
+    autoOcrTimer = null;
+  }
+}
+
 async function stopScannerQuietly() {
+  clearAutoOcrTimer();
   if (!scanner || !scannerStarted) return;
   try {
     await scanner.stop();
@@ -173,30 +184,12 @@ function captureCenteredFrame() {
   return true;
 }
 
-async function recognizeIsbnFromCamera() {
-  if (busy) return;
-  busy = true;
-  ocrBtn.disabled = true;
+async function getOcrWorker() {
+  if (ocrWorkerPromise) return ocrWorkerPromise;
+  if (typeof Tesseract === "undefined") throw new Error("Tesseract unavailable");
 
-  const captured = captureCenteredFrame();
-  if (!captured) {
-    busy = false;
-    ocrBtn.disabled = false;
-    setStatus("画像を取得できませんでした", "カメラを起動し直してください。", "error");
-    return;
-  }
-
-  await stopScannerQuietly();
-  reader.classList.add("hidden");
-  ocrBtn.classList.add("hidden");
-  ocrHelp.classList.add("hidden");
-  setStatus("ISBNを読んでいます…", "印刷された数字だけを文字認識しています。");
-
-  let worker = null;
-  try {
-    if (typeof Tesseract === "undefined") throw new Error("Tesseract unavailable");
-
-    worker = await Tesseract.createWorker("eng", 1, {
+  ocrWorkerPromise = (async () => {
+    const worker = await Tesseract.createWorker("eng", 1, {
       logger: (message) => {
         if (message.status === "recognizing text" && Number.isFinite(message.progress)) {
           setStatus("ISBNを読んでいます…", `${Math.round(message.progress * 100)}%`);
@@ -208,11 +201,55 @@ async function recognizeIsbnFromCamera() {
       tessedit_char_whitelist: "ISBNisbn0123456789- ",
       tessedit_pageseg_mode: "6",
     });
+    return worker;
+  })();
 
+  try {
+    return await ocrWorkerPromise;
+  } catch (error) {
+    ocrWorkerPromise = null;
+    throw error;
+  }
+}
+
+async function recognizeIsbnFromCamera(autoMode = false) {
+  if (busy) return;
+  busy = true;
+  clearAutoOcrTimer();
+  ocrBtn.disabled = true;
+
+  const captured = captureCenteredFrame();
+  if (!captured) {
+    busy = false;
+    ocrBtn.disabled = false;
+    if (autoMode) {
+      setStatus("読み取り中", "本を少し近づけて、ISBNの行を中央に向けてください。");
+      return;
+    }
+    setStatus("画像を取得できませんでした", "カメラを起動し直してください。", "error");
+    return;
+  }
+
+  await stopScannerQuietly();
+  reader.classList.add("hidden");
+  ocrBtn.classList.add("hidden");
+  ocrHelp.classList.add("hidden");
+  setStatus("ISBNを読んでいます…", "印刷されたISBN番号を自動認識しています。");
+
+  try {
+    const worker = await getOcrWorker();
     const { data } = await worker.recognize(captureCanvas);
     const isbn = extractValidIsbn(data?.text || "");
 
     if (!isbn) {
+      if (autoMode) {
+        busy = false;
+        ocrBtn.disabled = false;
+        await startScanner(false);
+        setStatus("読み取り中", "バーコードかISBNの行を中央に向けてください。必要ならISBN再読取も使えます。");
+        return;
+      }
+
       setStatus("ISBNを見つけられませんでした", "ISBNの行を中央に大きく映して、もう一度試してください。", "error");
       showReadyToRepeat();
       return;
@@ -221,12 +258,17 @@ async function recognizeIsbnFromCamera() {
     await submitCode(isbn, "ISBN文字");
   } catch (error) {
     console.error(error);
+    if (autoMode) {
+      busy = false;
+      ocrBtn.disabled = false;
+      await startScanner(false);
+      setStatus("読み取り中", "バーコードを向けてください。ISBN文字は再読取ボタンでも試せます。");
+      return;
+    }
+
     setStatus("ISBNを読めませんでした", "もう一度試すか、バーコードがある本で確認してください。", "error");
     showReadyToRepeat();
   } finally {
-    if (worker) {
-      try { await worker.terminate(); } catch (_) {}
-    }
     busy = false;
     ocrBtn.disabled = false;
   }
@@ -235,13 +277,14 @@ async function recognizeIsbnFromCamera() {
 async function handleDecodedBarcode(decodedText) {
   if (busy) return;
   busy = true;
+  clearAutoOcrTimer();
   const barcode = String(decodedText || "").replace(/\D/g, "");
   await stopScannerQuietly();
   await submitCode(barcode, "バーコード");
   busy = false;
 }
 
-async function startScanner() {
+async function startScanner(resetAuto = true) {
   const token = getShareToken();
   if (!token) {
     setStatus("家主リンクが必要です", "家主専用URLを開いてください。", "error");
@@ -252,13 +295,14 @@ async function startScanner() {
     return;
   }
 
+  if (resetAuto) autoOcrAttempted = false;
   busy = false;
   startBtn.classList.add("hidden");
   againBtn.classList.add("hidden");
   reader.classList.remove("hidden");
   ocrBtn.classList.remove("hidden");
   ocrHelp.classList.remove("hidden");
-  setStatus("読み取り中", "バーコードを向けてください。無い本は下のISBN文字ボタンを使えます。");
+  setStatus("読み取り中", "バーコードを探しています。見つからなければISBN文字も自動で読みます。");
 
   if (!scanner) {
     scanner = new Html5Qrcode("reader", {
@@ -278,6 +322,15 @@ async function startScanner() {
       () => {}
     );
     scannerStarted = true;
+
+    if (!autoOcrAttempted) {
+      autoOcrTimer = setTimeout(() => {
+        if (!busy && scannerStarted) {
+          autoOcrAttempted = true;
+          recognizeIsbnFromCamera(true);
+        }
+      }, 3200);
+    }
   } catch (error) {
     console.error(error);
     reader.classList.add("hidden");
@@ -288,7 +341,15 @@ async function startScanner() {
   }
 }
 
-startBtn.addEventListener("click", startScanner);
-againBtn.addEventListener("click", startScanner);
-ocrBtn.addEventListener("click", recognizeIsbnFromCamera);
-window.addEventListener("pagehide", () => stopScannerQuietly());
+startBtn.addEventListener("click", () => startScanner(true));
+againBtn.addEventListener("click", () => startScanner(true));
+ocrBtn.addEventListener("click", () => recognizeIsbnFromCamera(false));
+window.addEventListener("pagehide", async () => {
+  await stopScannerQuietly();
+  if (ocrWorkerPromise) {
+    try {
+      const worker = await ocrWorkerPromise;
+      await worker.terminate();
+    } catch (_) {}
+  }
+});
