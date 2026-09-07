@@ -45,14 +45,14 @@
 <body>
   <main>
     <h1>本を登録する</h1>
-    <p class="sub">本をカメラに向けるだけ。バーコードがあれば自動で読みます。</p>
+    <p class="sub">本をカメラに向けるだけ。バーコードを優先し、見つからなければISBNの印字も自動で探します。</p>
 
     <section class="card">
       <button id="startBtn" type="button">カメラで登録する</button>
       <div id="reader" class="hidden"></div>
 
-      <button id="ocrBtn" class="secondary hidden" type="button">バーコードがない → ISBN文字を読む</button>
-      <div id="ocrHelp" class="ocr-help hidden">「ISBN978-4-19-862573-3」のようなISBN行を、画面中央に大きく映して押してください。</div>
+      <button id="ocrBtn" class="secondary hidden" type="button">ISBNをもう一度読む</button>
+      <div id="ocrHelp" class="ocr-help hidden">バーコードがない本は「ISBN978-4-19-862573-3」のようなISBN行を画面中央に大きく映してください。数秒後に自動で文字認識します。</div>
 
       <div id="status" class="status">
         <strong>準備OK</strong>
