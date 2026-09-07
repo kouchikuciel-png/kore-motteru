@@ -19,7 +19,7 @@
     #reader video { border-radius:16px; }
     button { width:100%; border:0; border-radius:14px; padding:16px 18px; font-size:18px; font-weight:700; background:#111; color:#fff; cursor:pointer; }
     button.secondary { margin-top:12px; background:#ececec; color:#111; }
-    button:disabled { opacity:.55; }
+    button:disabled { opacity:.55; cursor:default; }
     .status { margin-top:16px; padding:18px; border-radius:16px; background:#f1f1f1; text-align:center; }
     .status strong { display:block; font-size:22px; margin-bottom:8px; }
     .barcode { margin-top:8px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#666; word-break:break-all; }
@@ -28,12 +28,18 @@
     .error { background:#fff0f0; }
     .hidden { display:none !important; }
     .ocr-help { margin-top:14px; padding:14px; border-radius:14px; background:#f3f3f3; color:#666; line-height:1.55; font-size:14px; }
+    .quantity-panel { margin-top:16px; padding:16px; border-radius:16px; background:#f7f7f7; }
+    .quantity-label { margin:0 0 12px; text-align:center; color:#555; font-weight:700; }
+    .quantity-row { display:flex; align-items:center; justify-content:center; gap:18px; margin-bottom:16px; }
+    button.quantity-button { width:58px; height:58px; padding:0; border-radius:50%; font-size:30px; line-height:1; }
+    .quantity-value { min-width:72px; text-align:center; font-size:32px; font-weight:800; font-variant-numeric:tabular-nums; }
+    .quantity-value small { display:block; margin-top:2px; color:#777; font-size:13px; font-weight:600; }
     canvas { display:none; }
     @media (prefers-color-scheme: dark) {
       body { background:#0f0f0f; color:#fff; }
       .card { background:#181818; }
-      .sub,.note,.barcode,.ocr-help { color:#aaa; }
-      .status,.ocr-help { background:#262626; }
+      .sub,.note,.barcode,.ocr-help,.quantity-label,.quantity-value small { color:#aaa; }
+      .status,.ocr-help,.quantity-panel { background:#262626; }
       .ok { background:#17391f; }
       .warn { background:#443712; }
       .error { background:#3b1b1b; }
@@ -45,7 +51,7 @@
 <body>
   <main>
     <h1>本を登録する</h1>
-    <p class="sub">本をカメラに向けるだけ。バーコードを優先し、見つからなければISBNの印字も自動で探します。</p>
+    <p class="sub">本をカメラに向けるだけ。ISBNバーコードを優先し、見つからなければISBNの印字も自動で探します。</p>
 
     <section class="card">
       <button id="startBtn" type="button">カメラで登録する</button>
@@ -59,10 +65,20 @@
         <span>カメラを起動してください。</span>
       </div>
 
-      <button id="againBtn" class="secondary hidden" type="button">続けて登録する</button>
+      <div id="quantityPanel" class="quantity-panel hidden">
+        <p id="quantityLabel" class="quantity-label">登録する数量</p>
+        <div class="quantity-row" aria-label="数量を選ぶ">
+          <button id="minusBtn" class="quantity-button" type="button" aria-label="数量を1減らす">−</button>
+          <div class="quantity-value"><span id="qtyValue">1</span><small>個</small></div>
+          <button id="plusBtn" class="quantity-button" type="button" aria-label="数量を1増やす">＋</button>
+        </div>
+        <button id="confirmBtn" type="button">登録する</button>
+      </div>
+
+      <button id="againBtn" class="secondary hidden" type="button">別のものを読み取る</button>
     </section>
 
-    <p class="note">写真そのものは保存しません。ISBN文字認識は端末上で行い、登録する番号だけを送信します。</p>
+    <p class="note">写真そのものは保存しません。ISBN文字認識は端末上で行い、登録する番号と数量だけを送信します。</p>
     <canvas id="captureCanvas"></canvas>
   </main>
   <script src="./owner.js"></script>
