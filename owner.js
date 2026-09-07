@@ -8,6 +8,12 @@ const againBtn = document.getElementById("againBtn");
 const reader = document.getElementById("reader");
 const statusBox = document.getElementById("status");
 const captureCanvas = document.getElementById("captureCanvas");
+const quantityPanel = document.getElementById("quantityPanel");
+const quantityLabel = document.getElementById("quantityLabel");
+const minusBtn = document.getElementById("minusBtn");
+const plusBtn = document.getElementById("plusBtn");
+const qtyValue = document.getElementById("qtyValue");
+const confirmBtn = document.getElementById("confirmBtn");
 
 let scanner = null;
 let scannerStarted = false;
@@ -15,6 +21,10 @@ let busy = false;
 let autoOcrTimer = null;
 let autoOcrAttempted = false;
 let ocrWorkerPromise = null;
+let pendingCode = null;
+let pendingSourceLabel = "";
+let pendingOwnedQuantity = 0;
+let quantity = 1;
 
 function getShareToken() {
   const raw = window.location.hash.replace(/^#/, "");
@@ -58,10 +68,18 @@ async function callRpc(name, body) {
   return await response.json();
 }
 
-function registerItem(token, barcode) {
-  return callRpc("register_household_item", {
+function getOwnerItemState(token, barcode) {
+  return callRpc("get_owner_item_state", {
     p_token: token,
     p_barcode: barcode,
+  });
+}
+
+function registerItem(token, barcode, qty) {
+  return callRpc("register_household_item_quantity", {
+    p_token: token,
+    p_barcode: barcode,
+    p_quantity: qty,
   });
 }
 
@@ -70,6 +88,25 @@ function clearAutoOcrTimer() {
     clearTimeout(autoOcrTimer);
     autoOcrTimer = null;
   }
+}
+
+function resetPendingRegistration() {
+  pendingCode = null;
+  pendingSourceLabel = "";
+  pendingOwnedQuantity = 0;
+  quantity = 1;
+  qtyValue.textContent = "1";
+  quantityPanel.classList.add("hidden");
+  confirmBtn.disabled = false;
+  plusBtn.disabled = false;
+  minusBtn.disabled = true;
+}
+
+function updateQuantityControls() {
+  qtyValue.textContent = String(quantity);
+  minusBtn.disabled = quantity <= 1 || busy;
+  plusBtn.disabled = busy;
+  confirmBtn.disabled = busy;
 }
 
 async function stopScannerQuietly() {
@@ -83,55 +120,18 @@ async function stopScannerQuietly() {
   scannerStarted = false;
 }
 
-function showReadyToRepeat() {
+function hideCameraControls() {
   reader.classList.add("hidden");
   ocrBtn.classList.add("hidden");
   ocrHelp.classList.add("hidden");
   startBtn.classList.add("hidden");
-  againBtn.classList.remove("hidden");
 }
 
-async function submitCode(code, sourceLabel) {
-  const token = getShareToken();
-  if (!token) {
-    setStatus("家主リンクが必要です", "家主専用URLを開いてください。", "error");
-    return;
-  }
-
-  const barcode = String(code || "").replace(/\D/g, "");
-  if (!/^\d{8,14}$/.test(barcode)) {
-    setStatus("番号を認識できませんでした", "もう一度カメラを向けてください。", "error");
-    showReadyToRepeat();
-    return;
-  }
-
-  setStatus("登録中…", `${sourceLabel}から番号を確認しました。`, "", barcode);
-
-  try {
-    const result = await registerItem(token, barcode);
-    if (!result || result.valid_token !== true) {
-      setStatus("家主リンクが無効です", "新しい家主専用URLを開いてください。", "error");
-      showReadyToRepeat();
-      return;
-    }
-
-    if (result.valid_barcode === false) {
-      setStatus("登録できない番号です", "8〜14桁の商品コードを確認してください。", "error", barcode);
-      showReadyToRepeat();
-      return;
-    }
-
-    if (result.created === true) {
-      setStatus("登録しました", "持ってるもの一覧に追加されました。", "ok", barcode);
-    } else {
-      setStatus("すでに登録されています", `現在の所有数量 ×${result.quantity ?? 1}`, "warn", barcode);
-    }
-    showReadyToRepeat();
-  } catch (error) {
-    console.error(error);
-    setStatus("登録できませんでした", "通信状態を確認して、もう一度お試しください。", "error", barcode);
-    showReadyToRepeat();
-  }
+function showReadyToRepeat() {
+  hideCameraControls();
+  quantityPanel.classList.add("hidden");
+  againBtn.classList.remove("hidden");
+  againBtn.textContent = "別のものを読み取る";
 }
 
 function isValidIsbn13(isbn) {
@@ -143,6 +143,140 @@ function isValidIsbn13(isbn) {
   }
   const check = (10 - (sum % 10)) % 10;
   return check === digits[12];
+}
+
+async function submitCode(code, sourceLabel) {
+  const token = getShareToken();
+  if (!token) {
+    setStatus("家主リンクが必要です", "家主専用URLを開いてください。", "error");
+    return;
+  }
+
+  const barcode = String(code || "").replace(/\D/g, "");
+  if (!isValidIsbn13(barcode)) {
+    setStatus("ISBNを認識できませんでした", "ISBNのバーコードか印字をもう一度カメラに向けてください。", "error");
+    resetPendingRegistration();
+    showReadyToRepeat();
+    return;
+  }
+
+  hideCameraControls();
+  quantityPanel.classList.add("hidden");
+  againBtn.classList.add("hidden");
+  setStatus("確認中…", `${sourceLabel}からISBNを確認しました。`, "", barcode);
+
+  try {
+    const result = await getOwnerItemState(token, barcode);
+    if (!result || result.valid_token !== true) {
+      setStatus("家主リンクが無効です", "新しい家主専用URLを開いてください。", "error");
+      resetPendingRegistration();
+      showReadyToRepeat();
+      return;
+    }
+
+    if (result.valid_barcode === false) {
+      setStatus("登録できないISBNです", "ISBN-13を確認してください。", "error", barcode);
+      resetPendingRegistration();
+      showReadyToRepeat();
+      return;
+    }
+
+    pendingCode = barcode;
+    pendingSourceLabel = sourceLabel;
+    pendingOwnedQuantity = Number(result.quantity || 0);
+    quantity = 1;
+    updateQuantityControls();
+
+    if (result.exists === true) {
+      setStatus(
+        "同じものを登録しますか？",
+        `現在の所有数量 ×${pendingOwnedQuantity}`,
+        "warn",
+        barcode
+      );
+      quantityLabel.textContent = "追加する数量";
+      confirmBtn.textContent = "追加する";
+    } else {
+      setStatus(
+        "読み取りました",
+        `${sourceLabel}からISBNを確認しました。登録する数量を選んでください。`,
+        "ok",
+        barcode
+      );
+      quantityLabel.textContent = "登録する数量";
+      confirmBtn.textContent = "登録する";
+    }
+
+    quantityPanel.classList.remove("hidden");
+    againBtn.classList.remove("hidden");
+    againBtn.textContent = "別のものを読み取る";
+  } catch (error) {
+    console.error(error);
+    setStatus("確認できませんでした", "通信状態を確認して、もう一度お試しください。", "error", barcode);
+    resetPendingRegistration();
+    showReadyToRepeat();
+  }
+}
+
+async function confirmRegistration() {
+  if (busy || !pendingCode) return;
+
+  const token = getShareToken();
+  if (!token) {
+    setStatus("家主リンクが必要です", "家主専用URLを開いてください。", "error");
+    return;
+  }
+
+  busy = true;
+  updateQuantityControls();
+  againBtn.disabled = true;
+
+  const barcode = pendingCode;
+  const qty = quantity;
+  const wasDuplicate = pendingOwnedQuantity > 0;
+  setStatus(
+    "登録中…",
+    wasDuplicate ? `同じものを${qty}個追加しています。` : `${qty}個登録しています。`,
+    "",
+    barcode
+  );
+
+  try {
+    const result = await registerItem(token, barcode, qty);
+    if (!result || result.valid_token !== true) {
+      setStatus("家主リンクが無効です", "新しい家主専用URLを開いてください。", "error");
+      resetPendingRegistration();
+      showReadyToRepeat();
+      return;
+    }
+
+    if (result.valid_barcode === false || result.valid_quantity === false) {
+      setStatus("登録できませんでした", "ISBNと数量を確認してください。", "error", barcode);
+      resetPendingRegistration();
+      showReadyToRepeat();
+      return;
+    }
+
+    const before = Number(result.quantity_before || 0);
+    const after = Number(result.quantity || before + qty);
+    setStatus(
+      "登録しました",
+      before > 0 ? `所有数量 ×${before} → ×${after}` : `所有数量 ×${after}`,
+      "ok",
+      barcode
+    );
+
+    resetPendingRegistration();
+    showReadyToRepeat();
+  } catch (error) {
+    console.error(error);
+    setStatus("登録できませんでした", "通信状態を確認して、もう一度お試しください。", "error", barcode);
+    quantityPanel.classList.remove("hidden");
+  } finally {
+    busy = false;
+    againBtn.disabled = false;
+    updateQuantityControls();
+  }
 }
 
 function extractValidIsbn(text) {
@@ -231,9 +365,7 @@ async function recognizeIsbnFromCamera(autoMode = false) {
   }
 
   await stopScannerQuietly();
-  reader.classList.add("hidden");
-  ocrBtn.classList.add("hidden");
-  ocrHelp.classList.add("hidden");
+  hideCameraControls();
   setStatus("ISBNを読んでいます…", "印刷されたISBN番号を自動認識しています。");
 
   try {
@@ -246,7 +378,7 @@ async function recognizeIsbnFromCamera(autoMode = false) {
         busy = false;
         ocrBtn.disabled = false;
         await startScanner(false);
-        setStatus("読み取り中", "バーコードかISBNの行を中央に向けてください。必要ならISBN再読取も使えます。");
+        setStatus("読み取り中", "ISBNバーコードかISBNの行を中央に向けてください。必要ならISBN再読取も使えます。");
         return;
       }
 
@@ -262,26 +394,33 @@ async function recognizeIsbnFromCamera(autoMode = false) {
       busy = false;
       ocrBtn.disabled = false;
       await startScanner(false);
-      setStatus("読み取り中", "バーコードを向けてください。ISBN文字は再読取ボタンでも試せます。");
+      setStatus("読み取り中", "ISBNバーコードを向けてください。ISBN文字は再読取ボタンでも試せます。");
       return;
     }
 
-    setStatus("ISBNを読めませんでした", "もう一度試すか、バーコードがある本で確認してください。", "error");
+    setStatus("ISBNを読めませんでした", "もう一度試すか、ISBNバーコードがある本で確認してください。", "error");
     showReadyToRepeat();
   } finally {
     busy = false;
     ocrBtn.disabled = false;
+    updateQuantityControls();
   }
 }
 
 async function handleDecodedBarcode(decodedText) {
+  const barcode = String(decodedText || "").replace(/\D/g, "");
+
+  // 日本の書籍にはISBNとは別の2段目バーコードがある。
+  // 本登録では有効なISBN-13 (978/979 + 正しいチェック桁) だけを採用する。
+  if (!isValidIsbn13(barcode)) return;
   if (busy) return;
+
   busy = true;
   clearAutoOcrTimer();
-  const barcode = String(decodedText || "").replace(/\D/g, "");
   await stopScannerQuietly();
-  await submitCode(barcode, "バーコード");
+  await submitCode(barcode, "ISBNバーコード");
   busy = false;
+  updateQuantityControls();
 }
 
 async function startScanner(resetAuto = true) {
@@ -297,19 +436,17 @@ async function startScanner(resetAuto = true) {
 
   if (resetAuto) autoOcrAttempted = false;
   busy = false;
+  resetPendingRegistration();
   startBtn.classList.add("hidden");
   againBtn.classList.add("hidden");
   reader.classList.remove("hidden");
   ocrBtn.classList.remove("hidden");
   ocrHelp.classList.remove("hidden");
-  setStatus("読み取り中", "バーコードを探しています。見つからなければISBN文字も自動で読みます。");
+  setStatus("読み取り中", "ISBNバーコードを探しています。見つからなければISBN文字も自動で読みます。");
 
   if (!scanner) {
     scanner = new Html5Qrcode("reader", {
-      formatsToSupport: [
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.EAN_8,
-      ],
+      formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13],
       verbose: false,
     });
   }
@@ -333,14 +470,23 @@ async function startScanner(resetAuto = true) {
     }
   } catch (error) {
     console.error(error);
-    reader.classList.add("hidden");
-    ocrBtn.classList.add("hidden");
-    ocrHelp.classList.add("hidden");
+    hideCameraControls();
     startBtn.classList.remove("hidden");
     setStatus("カメラを起動できませんでした", "Safariのカメラ許可を確認してください。", "error");
   }
 }
 
+minusBtn.addEventListener("click", () => {
+  quantity = Math.max(1, quantity - 1);
+  updateQuantityControls();
+});
+
+plusBtn.addEventListener("click", () => {
+  quantity += 1;
+  updateQuantityControls();
+});
+
+confirmBtn.addEventListener("click", confirmRegistration);
 startBtn.addEventListener("click", () => startScanner(true));
 againBtn.addEventListener("click", () => startScanner(true));
 ocrBtn.addEventListener("click", () => recognizeIsbnFromCamera(false));
@@ -353,3 +499,5 @@ window.addEventListener("pagehide", async () => {
     } catch (_) {}
   }
 });
+
+updateQuantityControls();
