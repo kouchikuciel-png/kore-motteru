@@ -12,8 +12,8 @@
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#f5f5f5; color:#111; }
     main { width:min(100%,620px); margin:0 auto; min-height:100dvh; padding:max(24px,env(safe-area-inset-top)) 18px max(28px,env(safe-area-inset-bottom)); }
-    h1 { margin:8px 0 6px; font-size:30px; }
-    .sub,.note { color:#666; line-height:1.6; }
+    h1 { margin:8px 0 18px; font-size:30px; }
+    .note { color:#666; line-height:1.6; }
     .card { background:#fff; border-radius:20px; padding:18px; box-shadow:0 2px 14px rgba(0,0,0,.08); }
     #reader { position:relative; width:100%; overflow:hidden; border-radius:16px; }
     #reader video { border-radius:16px; }
@@ -29,41 +29,82 @@
     .error { background:#fff0f0; }
     .hidden { display:none !important; }
     .ocr-help { margin-top:14px; padding:14px; border-radius:14px; background:#f3f3f3; color:#666; line-height:1.55; font-size:14px; }
+    .book-preview { display:flex; gap:14px; align-items:center; margin-top:16px; padding:14px; border-radius:16px; background:#f7f7f7; text-align:left; }
+    .book-cover { flex:0 0 82px; width:82px; height:112px; border-radius:10px; overflow:hidden; display:grid; place-items:center; background:#e9e9e9; font-size:34px; }
+    .book-cover img { width:100%; height:100%; object-fit:cover; }
+    .book-info { min-width:0; }
+    .book-title { display:block; font-size:18px; line-height:1.45; }
+    .book-author { display:block; margin-top:5px; color:#666; line-height:1.45; font-size:14px; }
+    .book-loading { color:#777; font-size:14px; }
     .quantity-panel { margin-top:16px; padding:16px; border-radius:16px; background:#f7f7f7; }
     .quantity-label { margin:0 0 12px; text-align:center; color:#555; font-weight:700; }
     .quantity-row { display:flex; align-items:center; justify-content:center; gap:18px; margin-bottom:16px; }
     button.quantity-button { width:58px; height:58px; padding:0; border-radius:50%; font-size:30px; line-height:1; }
     .quantity-value { min-width:72px; text-align:center; font-size:32px; font-weight:800; font-variant-numeric:tabular-nums; }
     .quantity-value small { display:block; margin-top:2px; color:#777; font-size:13px; font-weight:600; }
-    canvas { display:none; }
+    .help-link { width:auto; display:block; margin:16px auto 0; padding:8px 10px; background:transparent; color:#666; font-size:15px; font-weight:600; text-decoration:underline; }
+
+    .tutorial-overlay { position:fixed; inset:0; z-index:20000; display:flex; align-items:flex-end; justify-content:center; padding:18px; background:rgba(0,0,0,.55); }
+    .tutorial-sheet { position:relative; width:min(100%,560px); max-height:calc(100dvh - 36px); overflow:auto; border-radius:24px; padding:24px 20px 20px; background:#fff; box-shadow:0 18px 60px rgba(0,0,0,.28); }
+    .tutorial-sheet h2 { margin:0 44px 8px 0; font-size:28px; }
+    .tutorial-lead { margin:0 0 18px; color:#555; line-height:1.55; }
+    .tutorial-close { position:absolute; right:14px; top:14px; width:42px; height:42px; padding:0; border-radius:50%; background:#ececec; color:#111; font-size:24px; }
+    .tutorial-demo { position:relative; height:250px; margin:8px 0 18px; overflow:hidden; border-radius:20px; background:#171717; }
+    .demo-phone { position:absolute; inset:16px 24px; border:4px solid #555; border-radius:24px; overflow:hidden; background:#252525; }
+    .demo-book { position:absolute; left:50%; top:50%; width:220px; height:170px; transform:translate(-50%,-50%) rotate(-2deg); border-radius:8px; background:#f7f0df; box-shadow:0 8px 20px rgba(0,0,0,.25); }
+    .demo-barcode { position:absolute; left:42px; width:136px; height:36px; background:repeating-linear-gradient(90deg,#111 0 3px,transparent 3px 6px,#111 6px 8px,transparent 8px 12px); }
+    .demo-barcode.one { top:38px; }
+    .demo-barcode.two { top:94px; }
+    .demo-number { position:absolute; left:40px; right:40px; bottom:15px; text-align:center; color:#333; font:700 14px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:2px; }
+    .demo-scan { position:absolute; left:50%; top:48px; width:172px; height:58px; transform:translateX(-50%); border:5px solid #56c73a; border-radius:10px; animation:scanTarget 5.4s ease-in-out infinite; }
+    .demo-scan::after { content:""; position:absolute; left:9px; right:9px; top:50%; height:2px; background:#56c73a; opacity:.8; }
+    .tutorial-caption { min-height:54px; margin:0 0 14px; text-align:center; font-size:18px; font-weight:750; line-height:1.5; }
+    .tutorial-caption span { display:block; color:#666; font-size:14px; font-weight:500; }
+    .tutorial-check { display:flex; align-items:center; gap:10px; margin:8px 0 16px; font-size:16px; line-height:1.4; }
+    .tutorial-check input { width:22px; height:22px; flex:0 0 auto; }
+    @keyframes scanTarget {
+      0%, 36% { top:48px; border-color:#56c73a; }
+      45%, 76% { top:104px; border-color:#56c73a; }
+      84%, 100% { top:151px; border-color:#f0b429; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .demo-scan { animation:none; top:72px; }
+    }
     @media (prefers-color-scheme: dark) {
       body { background:#0f0f0f; color:#fff; }
-      .card { background:#181818; }
-      .sub,.note,.barcode,.ocr-help,.quantity-label,.quantity-value small { color:#aaa; }
-      .status,.ocr-help,.quantity-panel { background:#262626; }
+      .card,.tutorial-sheet { background:#181818; }
+      .note,.barcode,.ocr-help,.quantity-label,.quantity-value small,.book-author,.book-loading,.help-link,.tutorial-lead,.tutorial-caption span { color:#aaa; }
+      .status,.ocr-help,.quantity-panel,.book-preview { background:#262626; }
+      .book-cover { background:#303030; }
       .ok { background:#17391f; }
       .warn { background:#443712; }
       .error { background:#3b1b1b; }
       button { background:#fff; color:#111; }
-      button.secondary { background:#2d2d2d; color:#fff; }
+      button.secondary,.tutorial-close { background:#2d2d2d; color:#fff; }
     }
   </style>
 </head>
 <body>
   <main>
     <h1>本を登録する</h1>
-    <p class="sub">本のうらをカメラに向けてください。バーコードが見えるようにしてください。2つあっても、そのままで大丈夫です。</p>
 
     <section class="card">
       <button id="startBtn" type="button">カメラで登録する</button>
       <div id="reader" class="hidden"></div>
 
       <button id="ocrBtn" class="secondary hidden" type="button">うまく読めないとき</button>
-      <div id="ocrHelp" class="ocr-help hidden">バーコードが見つからないときは、本のうらの数字が書かれているあたりを画面中央に大きく映してください。そのまま数秒待つと自動で読み取ります。</div>
+      <div id="ocrHelp" class="ocr-help hidden">本のうらの、数字が書かれているあたりを画面中央に大きく映してください。そのまま少し待つと自動で探します。</div>
 
-      <div id="status" class="status">
-        <strong>準備OK</strong>
-        <span>カメラを起動してください。</span>
+      <div id="status" class="status hidden"></div>
+
+      <div id="bookPreview" class="book-preview hidden" aria-live="polite">
+        <div id="bookCover" class="book-cover"><span aria-hidden="true">📚</span></div>
+        <div class="book-info">
+          <strong id="bookTitle" class="book-title">本の情報を確認しています…</strong>
+          <span id="bookAuthor" class="book-author hidden"></span>
+          <span id="bookLoading" class="book-loading">表紙や本の名前が見つかれば表示します。</span>
+        </div>
       </div>
 
       <div id="quantityPanel" class="quantity-panel hidden">
@@ -80,8 +121,37 @@
     </section>
 
     <p class="note">写真そのものは保存しません。本に印刷された番号の読み取りは端末上で行い、登録する番号と数量だけを送信します。</p>
+    <button id="tutorialHelpBtn" class="help-link" type="button">使い方を見る</button>
     <canvas id="captureCanvas"></canvas>
   </main>
+
+  <div id="tutorialOverlay" class="tutorial-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tutorialTitle">
+    <div class="tutorial-sheet">
+      <button id="tutorialCloseBtn" class="tutorial-close" type="button" aria-label="使い方を閉じる">×</button>
+      <h2 id="tutorialTitle">使い方</h2>
+      <p class="tutorial-lead">むずかしい番号を探す必要はありません。本のうらをカメラに見せるだけです。</p>
+
+      <div class="tutorial-demo" aria-hidden="true">
+        <div class="demo-phone">
+          <div class="demo-book">
+            <div class="demo-barcode one"></div>
+            <div class="demo-barcode two"></div>
+            <div class="demo-number">978 4 08 874171 0</div>
+          </div>
+          <div class="demo-scan"></div>
+        </div>
+      </div>
+
+      <p class="tutorial-caption">本のうらを映してください。<span>バーコードが2つあっても、そのままで大丈夫です。読めないときは数字のあたりも自動で探します。</span></p>
+
+      <label class="tutorial-check">
+        <input id="tutorialDontShow" type="checkbox" />
+        <span>次回から表示しない</span>
+      </label>
+      <button id="tutorialStartBtn" type="button">カメラで登録する</button>
+    </div>
+  </div>
+
   <script src="./owner.js"></script>
   <script src="./owner-scan-feedback.js"></script>
 </body>
