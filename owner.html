@@ -15,8 +15,9 @@
     h1 { margin:8px 0 6px; font-size:30px; }
     .sub,.note { color:#666; line-height:1.6; }
     .card { background:#fff; border-radius:20px; padding:18px; box-shadow:0 2px 14px rgba(0,0,0,.08); }
-    #reader { width:100%; overflow:hidden; border-radius:16px; }
+    #reader { position:relative; width:100%; overflow:hidden; border-radius:16px; }
     #reader video { border-radius:16px; }
+    #reader.scan-rejected::after { content:""; position:absolute; z-index:9999; left:50%; top:50%; width:min(300px,calc(100% - 24px)); height:130px; transform:translate(-50%,-50%); border:7px solid #d93025; border-radius:8px; box-shadow:0 0 0 2px rgba(255,255,255,.72); pointer-events:none; }
     button { width:100%; border:0; border-radius:14px; padding:16px 18px; font-size:18px; font-weight:700; background:#111; color:#fff; cursor:pointer; }
     button.secondary { margin-top:12px; background:#ececec; color:#111; }
     button:disabled { opacity:.55; cursor:default; }
@@ -82,5 +83,6 @@
     <canvas id="captureCanvas"></canvas>
   </main>
   <script src="./owner.js"></script>
+  <script src="./owner-scan-feedback.js"></script>
 </body>
 </html>
