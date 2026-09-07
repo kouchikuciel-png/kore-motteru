@@ -14,17 +14,33 @@ const minusBtn = document.getElementById("minusBtn");
 const plusBtn = document.getElementById("plusBtn");
 const qtyValue = document.getElementById("qtyValue");
 const confirmBtn = document.getElementById("confirmBtn");
+const bookPreview = document.getElementById("bookPreview");
+const bookCover = document.getElementById("bookCover");
+const bookTitle = document.getElementById("bookTitle");
+const bookAuthor = document.getElementById("bookAuthor");
+const bookLoading = document.getElementById("bookLoading");
+const tutorialHelpBtn = document.getElementById("tutorialHelpBtn");
+const tutorialOverlay = document.getElementById("tutorialOverlay");
+const tutorialCloseBtn = document.getElementById("tutorialCloseBtn");
+const tutorialDontShow = document.getElementById("tutorialDontShow");
+const tutorialStartBtn = document.getElementById("tutorialStartBtn");
+
+const TUTORIAL_STORAGE_KEY = "kore-motteru-owner-tutorial-dismissed-v1";
+const MAX_AUTO_OCR_ATTEMPTS = 2;
+const INVALID_BARCODE_OCR_DELAY_MS = 1100;
 
 let scanner = null;
 let scannerStarted = false;
 let busy = false;
 let autoOcrTimer = null;
-let autoOcrAttempted = false;
+let autoOcrAttempts = 0;
+let invalidBarcodeSeenAt = 0;
 let ocrWorkerPromise = null;
 let pendingCode = null;
 let pendingSourceLabel = "";
 let pendingOwnedQuantity = 0;
 let quantity = 1;
+let tutorialResumeAfterClose = false;
 
 function getShareToken() {
   const raw = window.location.hash.replace(/^#/, "");
@@ -83,11 +99,151 @@ function registerItem(token, barcode, qty) {
   });
 }
 
+function isValidIsbn13(isbn) {
+  if (!/^97[89]\d{10}$/.test(isbn)) return false;
+  const digits = isbn.split("").map(Number);
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) {
+    sum += digits[i] * (i % 2 === 0 ? 1 : 3);
+  }
+  const check = (10 - (sum % 10)) % 10;
+  return check === digits[12];
+}
+
+async function fetchOpenLibraryBook(isbn) {
+  const key = `ISBN:${isbn}`;
+  const url = `https://openlibrary.org/api/books?bibkeys=${encodeURIComponent(key)}&jscmd=data&format=json`;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const book = data?.[key];
+    if (!book) return null;
+
+    return {
+      title: book.title || "",
+      author: Array.isArray(book.authors)
+        ? book.authors.map((item) => item.name).filter(Boolean).join(" / ")
+        : "",
+      coverUrl: book.cover?.medium || book.cover?.small || "",
+    };
+  } catch (error) {
+    console.warn("Open Library metadata unavailable", error);
+    return null;
+  }
+}
+
+async function fetchGoogleBooksBook(isbn) {
+  const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(`isbn:${isbn}`)}&maxResults=1&printType=books`;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const volume = data?.items?.[0]?.volumeInfo;
+    if (!volume) return null;
+
+    const imageUrl = volume.imageLinks?.thumbnail || volume.imageLinks?.smallThumbnail || "";
+    return {
+      title: volume.title || "",
+      author: Array.isArray(volume.authors) ? volume.authors.join(" / ") : "",
+      coverUrl: imageUrl.replace(/^http:/, "https:"),
+    };
+  } catch (error) {
+    console.warn("Google Books metadata unavailable", error);
+    return null;
+  }
+}
+
+async function fetchBookMetadata(isbn) {
+  const primary = await fetchOpenLibraryBook(isbn);
+  if (primary?.title && primary?.coverUrl && primary?.author) return primary;
+
+  const fallback = await fetchGoogleBooksBook(isbn);
+  if (!primary && !fallback) return null;
+
+  return {
+    title: primary?.title || fallback?.title || "",
+    author: primary?.author || fallback?.author || "",
+    coverUrl: primary?.coverUrl || fallback?.coverUrl || "",
+  };
+}
+
+function resetBookPreview() {
+  bookPreview.classList.add("hidden");
+  bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
+  bookTitle.textContent = "本の情報を確認しています…";
+  bookAuthor.textContent = "";
+  bookAuthor.classList.add("hidden");
+  bookLoading.textContent = "表紙や本の名前が見つかれば表示します。";
+  bookLoading.classList.remove("hidden");
+}
+
+function showBookPreviewLoading() {
+  bookPreview.classList.remove("hidden");
+  bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
+  bookTitle.textContent = "本の情報を確認しています…";
+  bookAuthor.classList.add("hidden");
+  bookLoading.classList.remove("hidden");
+}
+
+async function loadBookPreview(isbn) {
+  showBookPreviewLoading();
+  const metadata = await fetchBookMetadata(isbn);
+  if (pendingCode !== isbn) return;
+
+  if (!metadata || (!metadata.title && !metadata.coverUrl)) {
+    bookPreview.classList.add("hidden");
+    return;
+  }
+
+  bookTitle.textContent = metadata.title || "本を読み取りました";
+
+  if (metadata.author) {
+    bookAuthor.textContent = metadata.author;
+    bookAuthor.classList.remove("hidden");
+  } else {
+    bookAuthor.classList.add("hidden");
+  }
+
+  if (metadata.coverUrl) {
+    const image = document.createElement("img");
+    image.src = metadata.coverUrl;
+    image.alt = `${metadata.title || "本"}の表紙`;
+    image.loading = "eager";
+    image.onerror = () => {
+      bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
+    };
+    bookCover.innerHTML = "";
+    bookCover.appendChild(image);
+  }
+
+  bookLoading.classList.add("hidden");
+}
+
 function clearAutoOcrTimer() {
   if (autoOcrTimer) {
     clearTimeout(autoOcrTimer);
     autoOcrTimer = null;
   }
+}
+
+function scheduleAutoOcr(delay = 3200) {
+  clearAutoOcrTimer();
+  if (autoOcrAttempts >= MAX_AUTO_OCR_ATTEMPTS) return;
+
+  autoOcrTimer = setTimeout(() => {
+    requestAutoOcr();
+  }, delay);
+}
+
+function requestAutoOcr() {
+  if (busy || !scannerStarted || autoOcrAttempts >= MAX_AUTO_OCR_ATTEMPTS) return;
+  autoOcrAttempts += 1;
+  invalidBarcodeSeenAt = 0;
+  clearAutoOcrTimer();
+  recognizeIsbnFromCamera(true);
 }
 
 function resetPendingRegistration() {
@@ -100,6 +256,7 @@ function resetPendingRegistration() {
   confirmBtn.disabled = false;
   plusBtn.disabled = false;
   minusBtn.disabled = true;
+  resetBookPreview();
 }
 
 function updateQuantityControls() {
@@ -130,19 +287,47 @@ function hideCameraControls() {
 function showReadyToRepeat() {
   hideCameraControls();
   quantityPanel.classList.add("hidden");
+  bookPreview.classList.add("hidden");
   againBtn.classList.remove("hidden");
   againBtn.textContent = "別のものを読み取る";
 }
 
-function isValidIsbn13(isbn) {
-  if (!/^97[89]\d{10}$/.test(isbn)) return false;
-  const digits = isbn.split("").map(Number);
-  let sum = 0;
-  for (let i = 0; i < 12; i += 1) {
-    sum += digits[i] * (i % 2 === 0 ? 1 : 3);
+function isTutorialDismissed() {
+  try {
+    return localStorage.getItem(TUTORIAL_STORAGE_KEY) === "1";
+  } catch (_) {
+    return false;
   }
-  const check = (10 - (sum % 10)) % 10;
-  return check === digits[12];
+}
+
+function saveTutorialPreference() {
+  try {
+    if (tutorialDontShow.checked) {
+      localStorage.setItem(TUTORIAL_STORAGE_KEY, "1");
+    } else {
+      localStorage.removeItem(TUTORIAL_STORAGE_KEY);
+    }
+  } catch (_) {
+    // localStorageが使えなくてもチュートリアル自体は動かす
+  }
+}
+
+async function openTutorial() {
+  tutorialResumeAfterClose = scannerStarted;
+  if (scannerStarted) await stopScannerQuietly();
+  tutorialDontShow.checked = isTutorialDismissed();
+  tutorialOverlay.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+async function closeTutorial({ resume = true } = {}) {
+  saveTutorialPreference();
+  tutorialOverlay.classList.add("hidden");
+  document.body.style.overflow = "";
+
+  const shouldResume = resume && tutorialResumeAfterClose;
+  tutorialResumeAfterClose = false;
+  if (shouldResume) await startScanner(false);
 }
 
 async function submitCode(code, sourceLabel) {
@@ -195,6 +380,7 @@ async function submitCode(code, sourceLabel) {
     pendingOwnedQuantity = Number(result.quantity || 0);
     quantity = 1;
     updateQuantityControls();
+    loadBookPreview(barcode);
 
     if (result.exists === true) {
       setStatus(
@@ -281,6 +467,7 @@ async function confirmRegistration() {
     console.error(error);
     setStatus("登録できませんでした", "通信状態を確認して、もう一度お試しください。", "error", barcode);
     quantityPanel.classList.remove("hidden");
+    if (pendingCode) bookPreview.classList.remove("hidden");
   } finally {
     busy = false;
     againBtn.disabled = false;
@@ -312,8 +499,8 @@ function captureCenteredFrame() {
 
   const sourceW = video.videoWidth;
   const sourceH = video.videoHeight;
-  const cropW = Math.floor(sourceW * 0.92);
-  const cropH = Math.floor(sourceH * 0.48);
+  const cropW = Math.floor(sourceW * 0.94);
+  const cropH = Math.floor(sourceH * 0.68);
   const sx = Math.floor((sourceW - cropW) / 2);
   const sy = Math.floor((sourceH - cropH) / 2);
 
@@ -370,6 +557,7 @@ async function recognizeIsbnFromCamera(autoMode = false) {
         "読み取り中",
         "本のうらを少し近づけて、数字が書かれているあたりを中央に向けてください。"
       );
+      scheduleAutoOcr(1800);
       return;
     }
     setStatus("画像を取得できませんでした", "カメラを起動し直してください。", "error");
@@ -392,7 +580,7 @@ async function recognizeIsbnFromCamera(autoMode = false) {
         await startScanner(false);
         setStatus(
           "読み取り中",
-          "本のうらをカメラに向けてください。バーコードが2つあっても大丈夫です。"
+          "本のうらをそのまま映してください。バーコードや数字から登録できる番号を探します。"
         );
         return;
       }
@@ -415,7 +603,7 @@ async function recognizeIsbnFromCamera(autoMode = false) {
       await startScanner(false);
       setStatus(
         "読み取り中",
-        "本のうらをカメラに向けてください。バーコードが見えるようにしてください。"
+        "本のうらをそのまま映してください。バーコードが2つあっても大丈夫です。"
       );
       return;
     }
@@ -436,9 +624,19 @@ async function recognizeIsbnFromCamera(autoMode = false) {
 async function handleDecodedBarcode(decodedText) {
   const barcode = String(decodedText || "").replace(/\D/g, "");
 
-  // 日本の書籍にはISBNとは別の2段目バーコードがある。
-  // 本登録では有効なISBN-13 (978/979 + 正しいチェック桁) だけを採用する。
-  if (!isValidIsbn13(barcode)) return;
+  if (!isValidIsbn13(barcode)) {
+    if (!invalidBarcodeSeenAt) invalidBarcodeSeenAt = Date.now();
+
+    if (
+      Date.now() - invalidBarcodeSeenAt >= INVALID_BARCODE_OCR_DELAY_MS &&
+      autoOcrAttempts < MAX_AUTO_OCR_ATTEMPTS
+    ) {
+      requestAutoOcr();
+    }
+    return;
+  }
+
+  invalidBarcodeSeenAt = 0;
   if (busy) return;
 
   busy = true;
@@ -460,9 +658,14 @@ async function startScanner(resetAuto = true) {
     return;
   }
 
-  if (resetAuto) autoOcrAttempted = false;
+  if (resetAuto) {
+    autoOcrAttempts = 0;
+    invalidBarcodeSeenAt = 0;
+  }
+
   busy = false;
   resetPendingRegistration();
+  reader.classList.remove("scan-rejected");
   startBtn.classList.add("hidden");
   againBtn.classList.add("hidden");
   reader.classList.remove("hidden");
@@ -470,7 +673,7 @@ async function startScanner(resetAuto = true) {
   ocrHelp.classList.remove("hidden");
   setStatus(
     "読み取り中",
-    "本のうらをカメラに向けてください。バーコードが2つあっても大丈夫です。"
+    "本のうらをカメラに向けてください。バーコードが2つあっても、そのままで大丈夫です。"
   );
 
   if (!scanner) {
@@ -483,20 +686,12 @@ async function startScanner(resetAuto = true) {
   try {
     await scanner.start(
       { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 300, height: 130 }, aspectRatio: 1.777778 },
+      { fps: 10, qrbox: { width: 300, height: 150 }, aspectRatio: 1.777778 },
       handleDecodedBarcode,
       () => {}
     );
     scannerStarted = true;
-
-    if (!autoOcrAttempted) {
-      autoOcrTimer = setTimeout(() => {
-        if (!busy && scannerStarted) {
-          autoOcrAttempted = true;
-          recognizeIsbnFromCamera(true);
-        }
-      }, 3200);
-    }
+    scheduleAutoOcr(3200);
   } catch (error) {
     console.error(error);
     hideCameraControls();
@@ -519,6 +714,13 @@ confirmBtn.addEventListener("click", confirmRegistration);
 startBtn.addEventListener("click", () => startScanner(true));
 againBtn.addEventListener("click", () => startScanner(true));
 ocrBtn.addEventListener("click", () => recognizeIsbnFromCamera(false));
+tutorialHelpBtn.addEventListener("click", openTutorial);
+tutorialCloseBtn.addEventListener("click", () => closeTutorial({ resume: true }));
+tutorialStartBtn.addEventListener("click", async () => {
+  await closeTutorial({ resume: false });
+  await startScanner(true);
+});
+
 window.addEventListener("pagehide", async () => {
   await stopScannerQuietly();
   if (ocrWorkerPromise) {
@@ -530,3 +732,10 @@ window.addEventListener("pagehide", async () => {
 });
 
 updateQuantityControls();
+resetBookPreview();
+
+if (!isTutorialDismissed()) {
+  setTimeout(() => {
+    openTutorial();
+  }, 0);
+}
