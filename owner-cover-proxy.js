@@ -112,6 +112,13 @@
 // 初回ガイドは別ファイルで段階的に改善できるよう、ここから読み込む。
 (() => {
   if (document.querySelector('script[data-owner-tutorial-v2]')) return;
+
+  // owner.js がsetTimeoutで旧チュートリアルを開く前に、一旦差し替え待ちにする。
+  window.__ownerTutorialV2Pending = false;
+  window.openTutorial = () => {
+    window.__ownerTutorialV2Pending = true;
+  };
+
   const script = document.createElement("script");
   script.src = "./owner-tutorial-v2.js";
   script.dataset.ownerTutorialV2 = "1";
