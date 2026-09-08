@@ -74,9 +74,7 @@
   }
 
   async function showPrompt() {
-    resumeAfterClose = !!window.scannerStarted;
-    if (resumeAfterClose && typeof stopScannerQuietly === "function") await stopScannerQuietly();
-
+    resumeAfterClose = false;
     setOverlay(`
       <button id="tutorialV2Close" class="tutorial-v2-close" type="button" aria-label="閉じる">×</button>
       <h2>使い方を見ますか？</h2>
@@ -92,7 +90,7 @@
     const persist = () => savePreference(checkbox?.checked);
     document.getElementById("tutorialV2Watch").onclick = () => { persist(); showAnimation(); };
     document.getElementById("tutorialV2Skip").onclick = async () => { persist(); await hideOverlay({ resume: false }); if (typeof startScanner === "function") await startScanner(true); };
-    document.getElementById("tutorialV2Close").onclick = async () => { persist(); await hideOverlay({ resume: true }); };
+    document.getElementById("tutorialV2Close").onclick = async () => { persist(); await hideOverlay({ resume: false }); };
   }
 
   function showAnimation() {
@@ -122,16 +120,20 @@
     const checkbox = document.getElementById("tutorialV2DontShow");
     const persist = () => savePreference(checkbox?.checked);
     document.getElementById("tutorialV2Start").onclick = async () => { persist(); await hideOverlay({ resume: false }); if (typeof startScanner === "function") await startScanner(true); };
-    document.getElementById("tutorialV2Close").onclick = async () => { persist(); await hideOverlay({ resume: true }); };
+    document.getElementById("tutorialV2Close").onclick = async () => { persist(); await hideOverlay({ resume: false }); };
   }
 
-  // owner.js の初回自動表示を「質問」に差し替える。
   window.openTutorial = showPrompt;
 
-  // ヘルプからは質問を挟まず、具体的なアニメーションを直接見せる。
   helpBtn.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopImmediatePropagation();
     showAnimation();
   }, true);
+
+  // 旧チュートリアルのsetTimeoutが先に発火していた場合、その要求をここで引き継ぐ。
+  if (window.__ownerTutorialV2Pending && !dismissed()) {
+    window.__ownerTutorialV2Pending = false;
+    showPrompt();
+  }
 })();
