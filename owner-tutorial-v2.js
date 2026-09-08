@@ -20,27 +20,27 @@
     .camera-demo::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 20% 15%,rgba(255,255,255,.12),transparent 28%),linear-gradient(135deg,rgba(255,255,255,.06),transparent 55%)}
     .camera-ui{position:absolute;inset:0;border:3px solid rgba(255,255,255,.18);border-radius:22px}
     .camera-label{position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:6px 10px;border-radius:999px;background:rgba(0,0,0,.45);color:#fff;font-size:13px;white-space:nowrap}
-    .camera-focus{position:absolute;left:50%;top:50%;width:236px;height:166px;transform:translate(-50%,-50%);border:4px solid rgba(255,255,255,.72);border-radius:16px;animation:tutorialFocus 7.2s ease-in-out infinite}
+    .camera-focus{position:absolute;left:50%;top:50%;width:230px;height:290px;transform:translate(-50%,-50%);border:4px solid rgba(255,255,255,.68);border-radius:16px;animation:tutorialFocus 7.2s ease-in-out infinite}
     .tutorial-book{position:absolute;left:50%;top:53%;width:180px;height:240px;transform-style:preserve-3d;transform:translate(-50%,-50%) rotateY(0deg) scale(.78);animation:tutorialBook 7.2s ease-in-out infinite}
-    .tutorial-book-face{position:absolute;inset:0;border-radius:8px;backface-visibility:hidden;box-shadow:0 16px 35px rgba(0,0,0,.35);overflow:hidden}
+    .tutorial-book-face{position:absolute;inset:0;border-radius:8px;backface-visibility:hidden;box-shadow:0 16px 35px rgba(0,0,0,.35);overflow:hidden;border-left:6px solid rgba(0,0,0,.12)}
     .tutorial-book-front{display:grid;place-items:center;background:linear-gradient(145deg,#d8b77a,#8b5f2d);color:#fff;text-align:center;font-weight:800;font-size:22px;line-height:1.25;padding:18px}
     .tutorial-book-front::after{content:"BOOK";display:block;margin-top:12px;font-size:11px;letter-spacing:.24em;opacity:.78}
     .tutorial-book-back{transform:rotateY(180deg);background:#f5f0e5}
-    .tutorial-book-back::before{content:"";position:absolute;left:18px;right:18px;top:18px;height:62px;background:linear-gradient(#d5d0c5,#d5d0c5) left top/72% 7px no-repeat,linear-gradient(#d5d0c5,#d5d0c5) left 18px/88% 7px no-repeat,linear-gradient(#d5d0c5,#d5d0c5) left 36px/60% 7px no-repeat}
-    .tutorial-barcode-wrap{position:absolute;left:20px;right:20px;bottom:34px;height:80px;animation:tutorialBarcode 7.2s ease-in-out infinite}
-    .tutorial-barcode{height:44px;background:repeating-linear-gradient(90deg,#111 0 2px,transparent 2px 5px,#111 5px 8px,transparent 8px 11px,#111 11px 12px,transparent 12px 15px)}
-    .tutorial-barcode-num{text-align:center;color:#222;font:700 13px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;margin-top:5px}
-    .tutorial-scan-line{position:absolute;left:50%;top:58%;width:210px;height:72px;transform:translate(-50%,-50%);border:5px solid #58d33c;border-radius:12px;opacity:0;animation:tutorialScan 7.2s ease-in-out infinite}
-    .tutorial-scan-line::after{content:"";position:absolute;left:10px;right:10px;top:50%;height:2px;background:#58d33c}
+    .tutorial-book-back::before{content:"";position:absolute;left:18px;right:18px;top:18px;height:112px;background:linear-gradient(#d5d0c5,#d5d0c5) left top/72% 6px no-repeat,linear-gradient(#d5d0c5,#d5d0c5) left 17px/88% 6px no-repeat,linear-gradient(#d5d0c5,#d5d0c5) left 34px/60% 6px no-repeat,linear-gradient(#ded9cf,#ded9cf) left 60px/82% 5px no-repeat,linear-gradient(#ded9cf,#ded9cf) left 75px/68% 5px no-repeat,linear-gradient(#ded9cf,#ded9cf) left 90px/78% 5px no-repeat}
+    .tutorial-book-back::after{content:"";position:absolute;right:14px;top:18px;width:22px;height:22px;border-radius:50%;border:2px solid #cfc8b9;opacity:.7}
+    .tutorial-barcode-wrap{position:absolute;right:14px;bottom:18px;width:86px;height:48px}
+    .tutorial-barcode{height:26px;background:repeating-linear-gradient(90deg,#111 0 1px,transparent 1px 3px,#111 3px 5px,transparent 5px 7px,#111 7px 8px,transparent 8px 10px)}
+    .tutorial-barcode-num{text-align:center;color:#222;font:700 7px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.35px;margin-top:3px;white-space:nowrap}
+    .tutorial-scan-line{position:absolute;left:59%;top:68%;width:116px;height:70px;transform:translate(-50%,-50%);border:4px solid #58d33c;border-radius:10px;opacity:0;animation:tutorialScan 7.2s ease-in-out infinite}
+    .tutorial-scan-line::after{content:"";position:absolute;left:8px;right:8px;top:50%;height:2px;background:#58d33c}
     .tutorial-step{min-height:54px;text-align:center;font-size:20px;font-weight:800;line-height:1.45;margin:4px 0 0}
     .tutorial-step::after{display:block;margin-top:5px;color:#777;font-size:14px;font-weight:500;content:"本をカメラに見せるだけ";animation:tutorialText 7.2s step-end infinite}
-    @keyframes tutorialBook{0%,20%{transform:translate(-50%,-50%) rotateY(0deg) scale(.78)}30%,49%{transform:translate(-50%,-50%) rotateY(180deg) scale(.78)}58%,88%{transform:translate(-50%,-50%) rotateY(180deg) scale(1.18) translateY(12px)}100%{transform:translate(-50%,-50%) rotateY(0deg) scale(.78)}}
-    @keyframes tutorialFocus{0%,50%{width:236px;height:166px;top:50%}58%,88%{width:245px;height:112px;top:65%}100%{width:236px;height:166px;top:50%}}
-    @keyframes tutorialBarcode{0%,50%{transform:scale(1)}58%,88%{transform:scale(1.18)}100%{transform:scale(1)}}
+    @keyframes tutorialBook{0%,20%{transform:translate(-50%,-50%) rotateY(0deg) scale(.78)}30%,92%{transform:translate(-50%,-50%) rotateY(180deg) scale(.78)}100%{transform:translate(-50%,-50%) rotateY(0deg) scale(.78)}}
+    @keyframes tutorialFocus{0%,50%{width:230px;height:290px;top:50%;left:50%}58%,88%{width:132px;height:84px;top:68%;left:59%}100%{width:230px;height:290px;top:50%;left:50%}}
     @keyframes tutorialScan{0%,55%{opacity:0}62%,88%{opacity:1}100%{opacity:0}}
-    @keyframes tutorialText{0%,29%{content:"まず本をカメラに見せます"}30%,57%{content:"本をうら返します"}58%,92%{content:"バーコードのあたりを少し大きく映します"}100%{content:"本をカメラに見せるだけ"}}
+    @keyframes tutorialText{0%,29%{content:"まず本をカメラに見せます"}30%,57%{content:"本をうら返します"}58%,92%{content:"バーコードのあたりへカメラを近づけます"}100%{content:"本をカメラに見せるだけ"}}
     @media (prefers-color-scheme:dark){.tutorial-v2-sheet{background:#181818}.tutorial-v2-lead,.tutorial-step::after{color:#aaa}.tutorial-v2-close,.tutorial-v2-secondary{background:#2d2d2d!important;color:#fff!important}}
-    @media (prefers-reduced-motion:reduce){.tutorial-book,.camera-focus,.tutorial-barcode-wrap,.tutorial-scan-line,.tutorial-step::after{animation:none!important}.tutorial-book{transform:translate(-50%,-50%) rotateY(180deg) scale(1.05)}.tutorial-scan-line{opacity:1}}
+    @media (prefers-reduced-motion:reduce){.tutorial-book,.camera-focus,.tutorial-scan-line,.tutorial-step::after{animation:none!important}.tutorial-book{transform:translate(-50%,-50%) rotateY(180deg) scale(.78)}.camera-focus{width:132px;height:84px;top:68%;left:59%}.tutorial-scan-line{opacity:1}}
   `;
   document.head.appendChild(style);
 
@@ -97,20 +97,20 @@
     setOverlay(`
       <button id="tutorialV2Close" class="tutorial-v2-close" type="button" aria-label="閉じる">×</button>
       <h2>こんな感じで映します</h2>
-      <p class="tutorial-v2-lead">本をうら返して、バーコードのあたりをカメラに見せます。</p>
-      <div class="camera-demo" aria-label="本を裏返してバーコード周辺をカメラに映すアニメーション">
+      <p class="tutorial-v2-lead">本をうら返して、バーコードのあたりへカメラを近づけます。</p>
+      <div class="camera-demo" aria-label="本を裏返してバーコード周辺へカメラを近づけるアニメーション">
         <div class="camera-ui"></div>
         <div class="camera-label">カメラの画面</div>
         <div class="camera-focus"></div>
         <div class="tutorial-book">
           <div class="tutorial-book-face tutorial-book-front">本の表紙</div>
           <div class="tutorial-book-face tutorial-book-back">
-            <div class="tutorial-barcode-wrap"><div class="tutorial-barcode"></div><div class="tutorial-barcode-num">978 4 08 874171 0</div></div>
+            <div class="tutorial-barcode-wrap"><div class="tutorial-barcode"></div><div class="tutorial-barcode-num">9784088741710</div></div>
           </div>
         </div>
         <div class="tutorial-scan-line"></div>
       </div>
-      <p class="tutorial-step">本をカメラに向ける → うら返す → バーコード付近を映す</p>
+      <p class="tutorial-step">本をカメラに向ける → うら返す → バーコード付近へ寄る</p>
       ${commonCheck()}
       <div class="tutorial-v2-actions">
         <button id="tutorialV2Start" type="button">カメラで登録する</button>
@@ -131,7 +131,6 @@
     showAnimation();
   }, true);
 
-  // 旧チュートリアルのsetTimeoutが先に発火していた場合、その要求をここで引き継ぐ。
   if (window.__ownerTutorialV2Pending && !dismissed()) {
     window.__ownerTutorialV2Pending = false;
     showPrompt();
