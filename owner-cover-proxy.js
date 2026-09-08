@@ -108,3 +108,12 @@
     tryNext();
   };
 })();
+
+// 初回ガイドは別ファイルで段階的に改善できるよう、ここから読み込む。
+(() => {
+  if (document.querySelector('script[data-owner-tutorial-v2]')) return;
+  const script = document.createElement("script");
+  script.src = "./owner-tutorial-v2.js";
+  script.dataset.ownerTutorialV2 = "1";
+  document.head.appendChild(script);
+})();
