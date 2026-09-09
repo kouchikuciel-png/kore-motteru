@@ -476,6 +476,10 @@ async function confirmRegistration() {
 }
 
 function extractValidIsbn(text) {
+  if (window.KoreMotteruOcr?.extractValidIsbn) {
+    return window.KoreMotteruOcr.extractValidIsbn(text);
+  }
+
   const raw = String(text || "");
   const lines = raw.split(/\r?\n/).filter(Boolean);
   const candidates = [...lines, raw];
@@ -514,6 +518,59 @@ function captureCenteredFrame() {
   return true;
 }
 
+function createHighContrastNumberBand(sourceCanvas) {
+  const canvas = document.createElement("canvas");
+  const cropY = Math.floor(sourceCanvas.height * 0.16);
+  const cropHeight = Math.max(1, Math.floor(sourceCanvas.height * 0.68));
+  const scale = Math.max(1, Math.min(1.6, 1800 / sourceCanvas.width));
+
+  canvas.width = Math.max(1, Math.floor(sourceCanvas.width * scale));
+  canvas.height = Math.max(1, Math.floor(cropHeight * scale));
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(
+    sourceCanvas,
+    0,
+    cropY,
+    sourceCanvas.width,
+    cropHeight,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = image.data;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const gray = Math.round(pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114);
+    const contrasted = Math.max(0, Math.min(255, Math.round((gray - 128) * 1.65 + 128)));
+    pixels[i] = contrasted;
+    pixels[i + 1] = contrasted;
+    pixels[i + 2] = contrasted;
+  }
+  ctx.putImageData(image, 0, 0);
+  return canvas;
+}
+
+async function recognizeValidIsbn(worker) {
+  const passes = [
+    { image: captureCanvas, pageSegMode: "11" },
+    { image: createHighContrastNumberBand(captureCanvas), pageSegMode: "7" },
+  ];
+
+  for (const pass of passes) {
+    await worker.setParameters({
+      tessedit_char_whitelist: "ISBNisbnOQDILZSGB0123456789- ",
+      tessedit_pageseg_mode: pass.pageSegMode,
+    });
+    const { data } = await worker.recognize(pass.image);
+    const isbn = extractValidIsbn(data?.text || "");
+    if (isbn) return isbn;
+  }
+  return null;
+}
+
 async function getOcrWorker() {
   if (ocrWorkerPromise) return ocrWorkerPromise;
   if (typeof Tesseract === "undefined") throw new Error("Tesseract unavailable");
@@ -528,8 +585,8 @@ async function getOcrWorker() {
     });
 
     await worker.setParameters({
-      tessedit_char_whitelist: "ISBNisbn0123456789- ",
-      tessedit_pageseg_mode: "6",
+      tessedit_char_whitelist: "ISBNisbnOQDILZSGB0123456789- ",
+      tessedit_pageseg_mode: "11",
     });
     return worker;
   })();
@@ -570,8 +627,7 @@ async function recognizeIsbnFromCamera(autoMode = false) {
 
   try {
     const worker = await getOcrWorker();
-    const { data } = await worker.recognize(captureCanvas);
-    const isbn = extractValidIsbn(data?.text || "");
+    const isbn = await recognizeValidIsbn(worker);
 
     if (!isbn) {
       if (autoMode) {
