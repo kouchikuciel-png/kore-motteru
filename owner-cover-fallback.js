@@ -6,6 +6,15 @@
       .replace(/[\s\u3000・:：,，.。!！?？\-―ー_（）()［］\[\]「」『』【】]/g, "");
   }
 
+  function cleanAuthorName(value) {
+    let text = String(value || "").normalize("NFKC").trim();
+    if (!text) return "";
+    text = text.replace(/\s*[（(]?\s*\d{4}\s*[-–—]\s*\d{0,4}\s*[）)]?\s*$/u, "");
+    text = text.replace(/\s*,\s*(?=\d{4}\b).*$/u, "");
+    text = text.replace(/\s*,\s*/g, " ").replace(/\s+/g, " ").trim();
+    return text;
+  }
+
   function uniqueUrls(values) {
     const seen = new Set();
     const result = [];
@@ -18,16 +27,17 @@
     return result;
   }
 
-  function googleContentCover(volumeId) {
+  function googleContentCover(volumeId, zoom = 1) {
     if (!volumeId) return "";
-    return `https://books.google.com/books/content?id=${encodeURIComponent(volumeId)}&printsec=frontcover&img=1&zoom=1&edge=curl&source=gbs_api`;
+    return `https://books.google.com/books/content?id=${encodeURIComponent(volumeId)}&printsec=frontcover&img=1&zoom=${zoom}&source=gbs_api`;
   }
 
   function googleImageCandidates(item) {
     const volume = item?.volumeInfo || {};
     const links = volume.imageLinks || {};
     return uniqueUrls([
-      googleContentCover(item?.id),
+      googleContentCover(item?.id, 2),
+      googleContentCover(item?.id, 1),
       links.extraLarge,
       links.large,
       links.medium,
@@ -52,9 +62,9 @@
       if (probe.length >= 6 && longer.includes(probe)) score += 45;
     }
 
-    const author = normalizeText(targetAuthor);
+    const author = normalizeText(cleanAuthorName(targetAuthor));
     const candidateAuthor = normalizeText(
-      Array.isArray(volume?.authors) ? volume.authors.join(" / ") : ""
+      Array.isArray(volume?.authors) ? volume.authors.map(cleanAuthorName).join(" / ") : ""
     );
     if (author && candidateAuthor) {
       if (author === candidateAuthor) score += 35;
@@ -63,7 +73,7 @@
     return score;
   }
 
-  async function fetchGoogleItems(query, maxResults = 5) {
+  async function fetchGoogleItems(query, maxResults = 8) {
     try {
       const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=${maxResults}&printType=books`;
       const response = await fetch(url);
@@ -76,96 +86,102 @@
     }
   }
 
+  async function fetchOpenLibraryCoverCandidates(title, author) {
+    if (!title) return [];
+    try {
+      const params = new URLSearchParams({ title, limit: "8" });
+      if (author) params.set("author", cleanAuthorName(author));
+      const response = await fetch(`https://openlibrary.org/search.json?${params.toString()}`);
+      if (!response.ok) return [];
+      const data = await response.json();
+      const docs = Array.isArray(data?.docs) ? data.docs : [];
+      const targetTitle = normalizeText(title);
+      const targetAuthor = normalizeText(cleanAuthorName(author));
+      const ranked = docs.map((doc) => {
+        const docTitle = normalizeText(doc?.title || "");
+        const docAuthors = normalizeText((doc?.author_name || []).map(cleanAuthorName).join(" / "));
+        let score = docTitle === targetTitle ? 100 : (docTitle.includes(targetTitle) || targetTitle.includes(docTitle) ? 70 : 0);
+        if (targetAuthor && docAuthors && (docAuthors.includes(targetAuthor) || targetAuthor.includes(docAuthors))) score += 25;
+        return { doc, score };
+      }).filter(({ doc, score }) => score >= 70 && doc?.cover_i).sort((a, b) => b.score - a.score);
+      return uniqueUrls(ranked.flatMap(({ doc }) => [
+        `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`,
+        `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`,
+      ]));
+    } catch (error) {
+      console.warn("Open Library title cover fallback unavailable", error);
+      return [];
+    }
+  }
+
   async function findGoogleCoverCandidates(isbn, title, author) {
     const urls = [];
+    const cleanedAuthor = cleanAuthorName(author);
 
-    // まずISBN完全一致。imageLinksが無いレコードでもvolume IDから表紙URLを組み立てる。
-    const isbnItems = await fetchGoogleItems(`isbn:${isbn}`, 3);
-    for (const item of isbnItems) {
-      urls.push(...googleImageCandidates(item));
-    }
+    const isbnItems = await fetchGoogleItems(`isbn:${isbn}`, 5);
+    for (const item of isbnItems) urls.push(...googleImageCandidates(item));
 
     if (title) {
-      const terms = [`intitle:${title}`];
-      if (author) terms.push(`inauthor:${author}`);
-      const titleItems = await fetchGoogleItems(terms.join(" "), 5);
-
-      const ranked = titleItems
-        .map((item) => ({ item, score: candidateScore(title, author, item?.volumeInfo) }))
-        .filter(({ score }) => score >= 70)
-        .sort((a, b) => b.score - a.score);
-
-      for (const { item } of ranked) {
-        urls.push(...googleImageCandidates(item));
+      const queries = [
+        cleanedAuthor ? `intitle:${title} inauthor:${cleanedAuthor}` : `intitle:${title}`,
+        `intitle:${title}`,
+        cleanedAuthor ? `${title} ${cleanedAuthor}` : title,
+      ];
+      for (const query of queries) {
+        const titleItems = await fetchGoogleItems(query, 8);
+        const ranked = titleItems
+          .map((item) => ({ item, score: candidateScore(title, cleanedAuthor, item?.volumeInfo) }))
+          .filter(({ score }) => score >= 70)
+          .sort((a, b) => b.score - a.score);
+        for (const { item } of ranked) urls.push(...googleImageCandidates(item));
       }
     }
-
     return uniqueUrls(urls);
   }
 
   const previousFetchBookMetadata = typeof fetchBookMetadata === "function" ? fetchBookMetadata : null;
   if (previousFetchBookMetadata) {
-    window.fetchBookMetadata = async function fetchBookMetadataWithGoogleId(isbn) {
-      const metadata = (await previousFetchBookMetadata(isbn)) || {
-        title: "",
-        author: "",
-        coverUrl: "",
-        coverUrls: [],
-      };
+    window.fetchBookMetadata = async function fetchBookMetadataWithDedicatedCoverSearch(isbn) {
+      const metadata = (await previousFetchBookMetadata(isbn)) || { title: "", author: "", coverUrl: "", coverUrls: [] };
+      const author = cleanAuthorName(metadata.author || "");
 
-      const googleCandidates = await findGoogleCoverCandidates(
-        String(isbn || ""),
-        metadata.title || "",
-        metadata.author || ""
-      );
+      // 書誌情報が取れた時点で、表紙だけを別経路で探す。登録操作はこの結果を待つ必要はない。
+      const [googleCandidates, openLibraryCandidates] = await Promise.all([
+        findGoogleCoverCandidates(String(isbn || ""), metadata.title || "", author),
+        fetchOpenLibraryCoverCandidates(metadata.title || "", author),
+      ]);
 
       const coverUrls = uniqueUrls([
         ...googleCandidates,
+        ...openLibraryCandidates,
         ...(metadata.coverUrls || []),
         metadata.coverUrl,
       ]);
 
-      return {
-        ...metadata,
-        coverUrl: coverUrls[0] || metadata.coverUrl || "",
-        coverUrls,
-      };
+      return { ...metadata, author, coverUrl: coverUrls[0] || metadata.coverUrl || "", coverUrls };
     };
   }
 
-  // 既存の表示処理を置き換え、候補画像が壊れていたら必ず次へ進む。
-  // Google Booksのcontent URLはreferrerを消さず、そのままSafariに読ませる。
   if (typeof loadBookPreview === "function") {
     window.loadBookPreview = async function loadBookPreviewWithFallback(isbn) {
       showBookPreviewLoading();
       const metadata = await fetchBookMetadata(isbn);
       if (pendingCode !== isbn) return;
-
       if (!metadata || (!metadata.title && !(metadata.coverUrls || []).length && !metadata.coverUrl)) {
         bookPreview.classList.add("hidden");
         return;
       }
-
       bookTitle.textContent = metadata.title || "本の名前は見つかりませんでした";
+      const author = cleanAuthorName(metadata.author || "");
+      if (author) { bookAuthor.textContent = author; bookAuthor.classList.remove("hidden"); }
+      else bookAuthor.classList.add("hidden");
 
-      if (metadata.author) {
-        bookAuthor.textContent = metadata.author;
-        bookAuthor.classList.remove("hidden");
-      } else {
-        bookAuthor.classList.add("hidden");
-      }
-
-      const coverUrls = uniqueUrls([
-        ...(metadata.coverUrls || []),
-        metadata.coverUrl,
-      ]);
-
+      const coverUrls = uniqueUrls([...(metadata.coverUrls || []), metadata.coverUrl]);
       if (coverUrls.length === 0) {
         bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
         bookLoading.classList.add("hidden");
         return;
       }
-
       let index = 0;
       const tryNext = () => {
         if (pendingCode !== isbn) return;
@@ -174,26 +190,19 @@
           bookLoading.classList.add("hidden");
           return;
         }
-
-        const url = coverUrls[index++];
         const image = document.createElement("img");
         image.alt = `${metadata.title || "本"}の表紙`;
         image.loading = "eager";
         image.onload = () => {
           if (pendingCode !== isbn) return;
-          // 明らかに壊れた極小画像は表紙として採用しない。
-          if (image.naturalWidth < 40 || image.naturalHeight < 50) {
-            tryNext();
-            return;
-          }
+          if (image.naturalWidth < 40 || image.naturalHeight < 50) return tryNext();
           bookCover.innerHTML = "";
           bookCover.appendChild(image);
           bookLoading.classList.add("hidden");
         };
         image.onerror = tryNext;
-        image.src = url;
+        image.src = coverUrls[index++];
       };
-
       bookLoading.textContent = "表紙を探しています…";
       bookLoading.classList.remove("hidden");
       tryNext();
