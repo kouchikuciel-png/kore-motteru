@@ -157,8 +157,12 @@
         fetchOpenLibraryCoverCandidates(metadata.title || "", author),
       ]);
 
+      // ISBNから機械的に組み立てる版元ドットコムのURLは、
+      // 書誌が全く取れていない時に白いプレースホルダーを「表紙成功」と誤認することがある。
+      // タイトル確認済みの本だけ候補へ入れる。
+      const hanmotoCandidates = metadata.title ? hanmotoCoverCandidates(isbn) : [];
       const coverUrls = uniqueUrls([
-        ...hanmotoCoverCandidates(isbn),
+        ...hanmotoCandidates,
         ...googleCandidates,
         ...openLibraryCandidates,
         ...(metadata.coverUrls || []),
@@ -175,7 +179,11 @@
       const metadata = await fetchBookMetadata(isbn);
       if (pendingCode !== isbn) return;
       if (!metadata || (!metadata.title && !(metadata.coverUrls || []).length && !metadata.coverUrl)) {
-        bookPreview.classList.add("hidden");
+        bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
+        bookTitle.textContent = "本の名前は見つかりませんでした";
+        bookAuthor.classList.add("hidden");
+        bookLoading.textContent = "本の番号は読み取れています。このまま登録できます。";
+        bookLoading.classList.remove("hidden");
         return;
       }
       bookTitle.textContent = metadata.title || "本の名前は見つかりませんでした";
@@ -186,7 +194,8 @@
       const coverUrls = uniqueUrls([...(metadata.coverUrls || []), metadata.coverUrl]);
       if (coverUrls.length === 0) {
         bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
-        bookLoading.classList.add("hidden");
+        bookLoading.textContent = metadata.title ? "表紙は見つかりませんでした。" : "本の番号は読み取れています。このまま登録できます。";
+        bookLoading.classList.remove("hidden");
         return;
       }
       let index = 0;
@@ -194,7 +203,8 @@
         if (pendingCode !== isbn) return;
         if (index >= coverUrls.length) {
           bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
-          bookLoading.classList.add("hidden");
+          bookLoading.textContent = metadata.title ? "表紙は見つかりませんでした。" : "本の番号は読み取れています。このまま登録できます。";
+          bookLoading.classList.remove("hidden");
           return;
         }
         const image = document.createElement("img");
