@@ -90,6 +90,16 @@
     }
   }
 
+  function showMetadataUnavailable() {
+    bookPreview.classList.remove("hidden");
+    bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
+    bookTitle.textContent = "本の名前は見つかりませんでした";
+    bookAuthor.textContent = "";
+    bookAuthor.classList.add("hidden");
+    bookLoading.textContent = "本の番号は読み取れています。このまま登録できます。";
+    bookLoading.classList.remove("hidden");
+  }
+
   if (typeof loadBookPreview !== "function") return;
   window.loadBookPreview = async function loadBookPreviewViaProxy(isbn) {
     resetDiag(isbn);
@@ -100,8 +110,8 @@
     logDiag("metadata:result", { title: metadata?.title || "", author: metadata?.author || "", rawCoverCount: uniqueUrls([...(metadata?.coverUrls || []), metadata?.coverUrl]).length });
     if (!metadata || (!metadata.title && !(metadata.coverUrls || []).length && !metadata.coverUrl)) {
       logDiag("stop:no metadata and no cover candidates");
-      bookPreview.classList.add("hidden");
-      renderDiag(true, true);
+      showMetadataUnavailable();
+      renderDiag(true, false);
       return;
     }
 
@@ -116,9 +126,9 @@
     if (coverUrls.length === 0) {
       logDiag("stop:zero cover candidates");
       bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
-      bookLoading.textContent = "表紙候補が見つかりませんでした。";
+      bookLoading.textContent = metadata.title ? "表紙候補が見つかりませんでした。" : "本の番号は読み取れています。このまま登録できます。";
       bookLoading.classList.remove("hidden");
-      renderDiag(true, true);
+      renderDiag(true, false);
       return;
     }
 
@@ -128,7 +138,7 @@
       if (index >= coverUrls.length) {
         logDiag("stop:all candidates failed");
         bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
-        bookLoading.textContent = "表紙は見つかりませんでした。";
+        bookLoading.textContent = metadata.title ? "表紙は見つかりませんでした。" : "本の番号は読み取れています。このまま登録できます。";
         bookLoading.classList.remove("hidden");
         renderDiag(true, false);
         return;
@@ -173,8 +183,7 @@
   window.openTutorial = () => { window.__ownerTutorialV2Pending = true; };
   const script = document.createElement("script");
   script.src = "./owner-tutorial-v2.js";
-  script.dataset.ownerTutorialV2 = "1";
-  document.head.appendChild(script);
+  script.dataset.ownerTutorialV2 = "1"; document.head.appendChild(script);
 })();
 
 (() => {
