@@ -6,23 +6,23 @@
     if (diagBox && document.body.contains(diagBox)) return diagBox;
     diagBox = document.createElement("details");
     diagBox.id = "cover-diagnostics";
-    diagBox.style.cssText = "margin:12px 0;padding:12px 14px;border:1px solid #d8d8d8;border-radius:12px;background:rgba(127,127,127,.08);font-size:12px;line-height:1.55;text-align:left;word-break:break-word;";
+    diagBox.style.cssText = "display:none;margin-top:10px;padding:10px 12px;border:1px solid #cfcfcf;border-radius:10px;background:rgba(127,127,127,.08);font-size:11px;line-height:1.5;text-align:left;word-break:break-word;";
     const summary = document.createElement("summary");
     summary.textContent = "表紙診断を見る";
-    summary.style.cssText = "cursor:pointer;font-weight:700;font-size:14px;";
+    summary.style.cssText = "cursor:pointer;font-weight:700;font-size:13px;";
     const pre = document.createElement("pre");
-    pre.style.cssText = "white-space:pre-wrap;margin:10px 0 0;font:inherit;";
+    pre.style.cssText = "white-space:pre-wrap;margin:8px 0 0;font:inherit;max-height:260px;overflow:auto;";
     diagBox.append(summary, pre);
-    const host = bookPreview?.parentElement || document.body;
+    const host = bookLoading?.parentElement || document.querySelector(".book-info") || bookPreview;
     host.appendChild(diagBox);
     return diagBox;
   }
-  function renderDiag(show = false) {
+  function renderDiag(show = false, open = false) {
     const box = ensureDiagBox();
     const pre = box.querySelector("pre");
     if (pre) pre.textContent = diag.join("\n");
     box.style.display = show ? "block" : "none";
-    if (show) box.open = false;
+    box.open = !!(show && open);
   }
   function resetDiag(isbn) { diag.length = 0; logDiag(`ISBN ${isbn}`); renderDiag(false); }
   function logDiag(message, data) {
@@ -30,6 +30,7 @@
     diag.push(`${new Date().toISOString().slice(11, 23)} ${line}`);
     window.__coverDiagnostics = [...diag];
     console.info("[cover-diag]", line);
+    if (diagBox?.style.display === "block") renderDiag(true, diagBox.open);
   }
   window.getCoverDiagnostics = () => [...diag];
   window.copyCoverDiagnostics = async () => {
@@ -86,8 +87,6 @@
       logDiag(`candidate#${n} fetch`, `${describeUrl(url)} status=${response.status} type=${type || "-"}`);
     } catch (error) {
       logDiag(`candidate#${n} fetch-error`, `${describeUrl(url)} ${error?.name || "Error"}:${error?.message || error}`);
-    } finally {
-      renderDiag(true);
     }
   }
 
@@ -100,11 +99,16 @@
     if (pendingCode !== isbn) { logDiag("abort:pendingCode changed"); return; }
     logDiag("metadata:result", { title: metadata?.title || "", author: metadata?.author || "", rawCoverCount: uniqueUrls([...(metadata?.coverUrls || []), metadata?.coverUrl]).length });
     if (!metadata || (!metadata.title && !(metadata.coverUrls || []).length && !metadata.coverUrl)) {
-      logDiag("stop:no metadata and no cover candidates"); bookPreview.classList.add("hidden"); renderDiag(true); return;
+      logDiag("stop:no metadata and no cover candidates");
+      bookPreview.classList.add("hidden");
+      renderDiag(true, true);
+      return;
     }
+
     bookTitle.textContent = metadata.title || "本の名前は見つかりませんでした";
     const author = cleanAuthorName(metadata.author || "");
-    if (author) { bookAuthor.textContent = author; bookAuthor.classList.remove("hidden"); } else bookAuthor.classList.add("hidden");
+    if (author) { bookAuthor.textContent = author; bookAuthor.classList.remove("hidden"); }
+    else bookAuthor.classList.add("hidden");
 
     const rawUrls = uniqueUrls([...(metadata.coverUrls || []), metadata.coverUrl]);
     const coverUrls = expandCoverCandidates(rawUrls);
@@ -112,38 +116,54 @@
     if (coverUrls.length === 0) {
       logDiag("stop:zero cover candidates");
       bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
-      bookLoading.textContent = "表紙候補が見つかりませんでした。"; bookLoading.classList.remove("hidden"); renderDiag(true); return;
+      bookLoading.textContent = "表紙候補が見つかりませんでした。";
+      bookLoading.classList.remove("hidden");
+      renderDiag(true, true);
+      return;
     }
 
-    let index = 0, pendingProbes = 0;
-    const finishIfDone = () => { if (index >= coverUrls.length && pendingProbes === 0) renderDiag(true); };
+    let index = 0;
     const tryNext = () => {
       if (pendingCode !== isbn) { logDiag("abort:image pendingCode changed"); return; }
       if (index >= coverUrls.length) {
         logDiag("stop:all candidates failed");
         bookCover.innerHTML = '<span aria-hidden="true">📚</span>';
-        bookLoading.textContent = "表紙は見つかりませんでした。"; bookLoading.classList.remove("hidden"); finishIfDone(); return;
+        bookLoading.textContent = "表紙は見つかりませんでした。";
+        bookLoading.classList.remove("hidden");
+        renderDiag(true, false);
+        return;
       }
-      const n = index + 1, url = coverUrls[index++];
+      const n = index + 1;
+      const url = coverUrls[index++];
       logDiag(`candidate#${n}:img-start`, describeUrl(url));
       const image = document.createElement("img");
-      image.alt = `${metadata.title || "本"}の表紙`; image.loading = "eager"; image.decoding = "async";
+      image.alt = `${metadata.title || "本"}の表紙`;
+      image.loading = "eager";
+      image.decoding = "async";
       image.onload = () => {
         if (pendingCode !== isbn) return;
         logDiag(`candidate#${n}:img-load`, `${describeUrl(url)} ${image.naturalWidth}x${image.naturalHeight}`);
-        if (image.naturalWidth < 40 || image.naturalHeight < 50) { logDiag(`candidate#${n}:reject-small`); return tryNext(); }
-        bookCover.innerHTML = ""; bookCover.appendChild(image); bookLoading.classList.add("hidden");
-        logDiag(`success:candidate#${n}`, describeUrl(url)); renderDiag(false);
+        if (image.naturalWidth < 40 || image.naturalHeight < 50) {
+          logDiag(`candidate#${n}:reject-small`);
+          return tryNext();
+        }
+        bookCover.innerHTML = "";
+        bookCover.appendChild(image);
+        bookLoading.classList.add("hidden");
+        logDiag(`success:candidate#${n}`, describeUrl(url));
+        renderDiag(false);
       };
       image.onerror = () => {
         logDiag(`candidate#${n}:img-error`, describeUrl(url));
-        pendingProbes++;
-        probeCandidate(url, n).finally(() => { pendingProbes--; finishIfDone(); });
+        probeCandidate(url, n).finally(() => renderDiag(true, diagBox?.open || false));
         tryNext();
       };
       image.src = url;
     };
-    bookLoading.textContent = "表紙を探しています…"; bookLoading.classList.remove("hidden"); tryNext();
+
+    bookLoading.textContent = "表紙を探しています…";
+    bookLoading.classList.remove("hidden");
+    tryNext();
   };
 })();
 
@@ -151,5 +171,8 @@
   if (document.querySelector('script[data-owner-tutorial-v2]')) return;
   window.__ownerTutorialV2Pending = false;
   window.openTutorial = () => { window.__ownerTutorialV2Pending = true; };
-  const script = document.createElement("script"); script.src = "./owner-tutorial-v2.js"; script.dataset.ownerTutorialV2 = "1"; document.head.appendChild(script);
+  const script = document.createElement("script");
+  script.src = "./owner-tutorial-v2.js";
+  script.dataset.ownerTutorialV2 = "1";
+  document.head.appendChild(script);
 })();
