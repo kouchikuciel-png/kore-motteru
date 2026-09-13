@@ -32,6 +32,12 @@
     return `https://books.google.com/books/content?id=${encodeURIComponent(volumeId)}&printsec=frontcover&img=1&zoom=${zoom}&source=gbs_api`;
   }
 
+  function hanmotoCoverCandidates(isbn) {
+    const normalized = String(isbn || "").replace(/\D/g, "");
+    if (!/^9784\d{9}$/.test(normalized)) return [];
+    return [`https://img.hanmoto.com/bd/img/${normalized}_600.jpg`];
+  }
+
   function googleImageCandidates(item) {
     const volume = item?.volumeInfo || {};
     const links = volume.imageLinks || {};
@@ -152,6 +158,7 @@
       ]);
 
       const coverUrls = uniqueUrls([
+        ...hanmotoCoverCandidates(isbn),
         ...googleCandidates,
         ...openLibraryCandidates,
         ...(metadata.coverUrls || []),

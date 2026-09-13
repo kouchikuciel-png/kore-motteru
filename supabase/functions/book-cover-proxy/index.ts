@@ -3,6 +3,7 @@ const ALLOWED_EXACT_HOSTS = new Set([
   "books.google.co.jp",
   "covers.openlibrary.org",
   "cover.openbd.jp",
+  "img.hanmoto.com",
 ]);
 
 function isAllowedHost(hostname: string) {
