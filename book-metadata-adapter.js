@@ -135,3 +135,11 @@
     return toGoogleBooksResponse(openBd);
   };
 })();
+
+(() => {
+  if (document.querySelector('script[data-role-ui]')) return;
+  const script = document.createElement("script");
+  script.src = "./role-ui.js";
+  script.dataset.roleUi = "1";
+  document.head.appendChild(script);
+})();
