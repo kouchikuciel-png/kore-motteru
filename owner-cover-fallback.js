@@ -158,15 +158,15 @@
       ]);
 
       // ISBNから機械的に組み立てる版元ドットコムのURLは、
-      // 書誌が全く取れていない時に白いプレースホルダーを「表紙成功」と誤認することがある。
-      // タイトル確認済みの本だけ候補へ入れる。
+      // 実画像が無い場合でも白いプレースホルダーを返すことがあるため最終候補へ回す。
+      // 書誌が全く取れていない時は候補へ入れない。
       const hanmotoCandidates = metadata.title ? hanmotoCoverCandidates(isbn) : [];
       const coverUrls = uniqueUrls([
-        ...hanmotoCandidates,
         ...googleCandidates,
         ...openLibraryCandidates,
         ...(metadata.coverUrls || []),
         metadata.coverUrl,
+        ...hanmotoCandidates,
       ]);
 
       return { ...metadata, author, coverUrl: coverUrls[0] || metadata.coverUrl || "", coverUrls };
