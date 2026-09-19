@@ -227,7 +227,7 @@
   <main>
     <section id="ownedView">
       <h1>持ってるもの</h1>
-      <p class="sub">まずは家にあるものを見てから、プレゼントを選べます。</p>
+      <p class="sub">家にあるものを見たり、買う前に重複を確認できます。</p>
 
       <div class="owned-head">
         <h2>登録済み</h2>
@@ -270,7 +270,7 @@
             </div>
           </div>
 
-          <div class="qty-label">今回の購入予定数量</div>
+          <div class="qty-label">今回の数量</div>
           <div class="qty-row">
             <button id="minusBtn" class="small secondary" type="button">−</button>
             <div id="qtyValue">1</div>
@@ -283,7 +283,7 @@
         <button id="againBtn" class="secondary hidden">別の商品を確認する</button>
       </section>
 
-      <p class="note">写真は保存しません。読み取ったバーコード番号と購入状態だけを共有します。</p>
+      <p class="note">写真は保存しません。読み取ったバーコード番号と、購入予定・受け渡しの状態だけを共有します。</p>
     </section>
   </main>
 
@@ -300,5 +300,6 @@
 
   <script src="./book-metadata-adapter.js"></script>
   <script src="./app.js"></script>
+  <script src="./handoff-ui.js"></script>
 </body>
 </html>
