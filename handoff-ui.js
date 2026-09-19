@@ -260,6 +260,179 @@
     });
   }
 
+  function installOwnerProvenanceSettings() {
+    const main = document.querySelector("main");
+    const heading = main?.querySelector("h1");
+    if (!main || !heading || document.getElementById("provenanceSettings")) return;
+
+    const style = document.createElement("style");
+    style.textContent = `
+      .provenance-settings {
+        margin:0 0 16px;
+        padding:14px;
+        border-radius:16px;
+        background:#fff;
+        box-shadow:0 2px 14px rgba(0,0,0,.08);
+      }
+      .provenance-settings-head {
+        display:flex; align-items:center; justify-content:space-between; gap:12px;
+      }
+      .provenance-settings-title { margin:0; font-size:17px; font-weight:800; }
+      .provenance-settings-state {
+        flex:0 0 auto; padding:5px 9px; border-radius:999px;
+        background:#f1f1f1; color:#555; font-size:12px; font-weight:800;
+      }
+      .provenance-settings-copy {
+        margin:8px 0 10px; color:#666; font-size:13px; line-height:1.55;
+      }
+      .provenance-settings button { margin:0; padding:11px 14px; font-size:15px; }
+      .provenance-choice-overlay {
+        position:fixed; inset:0; z-index:21000;
+        display:flex; align-items:flex-end; justify-content:center;
+        padding:max(18px,env(safe-area-inset-top)) 18px max(18px,env(safe-area-inset-bottom));
+        background:rgba(0,0,0,.58);
+      }
+      .provenance-choice-sheet {
+        width:min(100%,560px); border-radius:24px; padding:22px 18px 18px;
+        background:#fff; box-shadow:0 18px 60px rgba(0,0,0,.3);
+      }
+      .provenance-choice-sheet h2 { margin:0 0 10px; font-size:25px; }
+      .provenance-choice-sheet p { margin:0 0 16px; color:#555; line-height:1.6; }
+      .provenance-choice-sheet button + button { margin-top:10px; }
+      .provenance-choice-note { margin-top:12px !important; font-size:13px; color:#777 !important; }
+      @media (prefers-color-scheme: dark) {
+        .provenance-settings,.provenance-choice-sheet { background:#181818; }
+        .provenance-settings-state { background:#2d2d2d; color:#ddd; }
+        .provenance-settings-copy,.provenance-choice-sheet p { color:#aaa; }
+        .provenance-choice-note { color:#999 !important; }
+      }
+    `;
+    document.head.appendChild(style);
+
+    const settings = document.createElement("section");
+    settings.id = "provenanceSettings";
+    settings.className = "provenance-settings";
+    settings.innerHTML = `
+      <div class="provenance-settings-head">
+        <p class="provenance-settings-title">本の来歴表示</p>
+        <span id="provenanceSettingsState" class="provenance-settings-state">確認中…</span>
+      </div>
+      <p class="provenance-settings-copy">本棚に「じいじから」など、誰から来た本かを表示するか選べます。記録自体は非表示でも残ります。</p>
+      <button id="provenanceSettingsToggle" class="secondary" type="button" disabled>変更する</button>
+    `;
+
+    heading.insertAdjacentElement("afterend", settings);
+
+    const state = settings.querySelector("#provenanceSettingsState");
+    const toggle = settings.querySelector("#provenanceSettingsToggle");
+    let chosen = false;
+    let visible = false;
+    let choiceOverlay = null;
+
+    function render() {
+      if (!chosen) {
+        state.textContent = "未選択";
+        toggle.textContent = "表示を選ぶ";
+        toggle.disabled = false;
+        return;
+      }
+      state.textContent = visible ? "表示する" : "表示しない";
+      toggle.textContent = visible ? "表示しないに変更" : "表示するに変更";
+      toggle.disabled = false;
+    }
+
+    async function save(nextVisible) {
+      const token = tokenFromHash();
+      if (!token) return false;
+
+      toggle.disabled = true;
+      choiceOverlay?.querySelectorAll("button").forEach((button) => {
+        button.disabled = true;
+      });
+
+      try {
+        const result = await rpc("set_owner_provenance_visibility", {
+          p_token: token,
+          p_show: Boolean(nextVisible),
+        });
+        if (!result || result.valid_token !== true || result.valid_value !== true) {
+          throw new Error("invalid owner settings response");
+        }
+
+        chosen = true;
+        visible = Boolean(result.show_item_provenance);
+        choiceOverlay?.remove();
+        choiceOverlay = null;
+        render();
+        return true;
+      } catch (error) {
+        console.error(error);
+        state.textContent = "変更できませんでした";
+        render();
+        return false;
+      }
+    }
+
+    function openFirstChoice() {
+      if (choiceOverlay || chosen) return;
+
+      choiceOverlay = document.createElement("div");
+      choiceOverlay.className = "provenance-choice-overlay";
+      choiceOverlay.setAttribute("role", "dialog");
+      choiceOverlay.setAttribute("aria-modal", "true");
+      choiceOverlay.setAttribute("aria-labelledby", "provenanceChoiceTitle");
+      choiceOverlay.innerHTML = `
+        <div class="provenance-choice-sheet">
+          <h2 id="provenanceChoiceTitle">誰からもらった本か、表示しますか？</h2>
+          <p>本棚に「じいじから」「ばあばから」などの来歴を表示できます。</p>
+          <button type="button" data-provenance-choice="show">表示する</button>
+          <button class="secondary" type="button" data-provenance-choice="hide">表示しない</button>
+          <p class="provenance-choice-note">どちらを選んでも来歴の記録は残ります。あとからいつでも変更できます。</p>
+        </div>
+      `;
+      document.body.appendChild(choiceOverlay);
+
+      choiceOverlay.querySelector('[data-provenance-choice="show"]')
+        .addEventListener("click", () => save(true));
+      choiceOverlay.querySelector('[data-provenance-choice="hide"]')
+        .addEventListener("click", () => save(false));
+    }
+
+    toggle.addEventListener("click", () => {
+      if (!chosen) {
+        openFirstChoice();
+        return;
+      }
+      save(!visible);
+    });
+
+    async function load() {
+      const token = tokenFromHash();
+      if (!token) {
+        state.textContent = "家主リンクが必要です";
+        return;
+      }
+
+      try {
+        const result = await rpc("get_owner_household_settings", { p_token: token });
+        if (!result || result.valid_token !== true) {
+          state.textContent = "家主リンクを確認";
+          return;
+        }
+
+        chosen = Boolean(result.provenance_visibility_chosen);
+        visible = Boolean(result.show_item_provenance);
+        render();
+        if (!chosen) openFirstChoice();
+      } catch (error) {
+        console.error(error);
+        state.textContent = "読み込めませんでした";
+      }
+    }
+
+    load();
+  }
+
   function installOwnerInbox() {
     const main = document.querySelector("main");
     const registrationCard = main?.querySelector(".card");
@@ -470,6 +643,7 @@
   function install() {
     if (!SUPABASE_RPC_BASE || !SUPABASE_KEY) return;
     if (isOwner) {
+      installOwnerProvenanceSettings();
       installOwnerInbox();
       return;
     }
