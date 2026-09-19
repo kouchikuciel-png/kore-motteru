@@ -111,12 +111,16 @@ function getProductState(token, barcode) {
   });
 }
 
+function getGuestLabel() {
+  return window.KoreMotteruGuestIdentity?.getLabel?.() || "";
+}
+
 function addPurchasePlan(token, barcode, qty) {
   return callRpc("add_purchase_plan", {
     p_token: token,
     p_barcode: barcode,
     p_buyer_key: getOrCreateBuyerKey(),
-    p_buyer_label: null,
+    p_buyer_label: getGuestLabel() || null,
     p_quantity: qty,
     p_visibility: "GIFT_SECRET",
   });
@@ -242,12 +246,29 @@ function closeOwnedDetail() {
   detailOverlay.classList.add("hidden");
 }
 
+function provenanceSummary(origins) {
+  const rows = Array.isArray(origins) ? origins : [];
+  const labels = [];
+  for (const row of rows) {
+    const label = String(row?.giver_label || row?.purchaser_label || "").trim();
+    if (label && label !== "ゲスト" && !labels.includes(label)) labels.push(label);
+  }
+  if (labels.length === 0) return "";
+  if (labels.length <= 3) return `${labels.join("・")}から`;
+  return `${labels.slice(0, 3).join("・")}ほかから`;
+}
+
 function openOwnedDetail(item) {
   currentDetailItem = item;
   detailTitle.textContent = item.title;
   detailAuthor.textContent = item.author || "";
   detailAuthor.classList.toggle("hidden", !item.author);
-  detailMeta.textContent = `${isIsbn13(item.barcode) ? "ISBN" : "コード"} ${item.barcode} ・ 所有 ×${item.quantity}`;
+  const provenance = provenanceSummary(item.origins);
+  detailMeta.textContent = [
+    `${isIsbn13(item.barcode) ? "ISBN" : "コード"} ${item.barcode}`,
+    `所有 ×${item.quantity}`,
+    provenance,
+  ].filter(Boolean).join(" ・ ");
   detailCover.innerHTML = item.coverUrl
     ? `<img src="${escapeHtml(item.coverUrl)}" alt="${escapeHtml(item.title)}の表紙" />`
     : `<span aria-hidden="true">${isIsbn13(item.barcode) ? "📚" : "📦"}</span>`;
@@ -281,6 +302,7 @@ function renderOwnedItems(items, bookMetadata = {}) {
       author,
       coverUrl,
       quantity: Number(item.quantity || 1),
+      origins: Array.isArray(item.origins) ? item.origins : [],
     };
 
     const article = document.createElement("article");
@@ -298,6 +320,9 @@ function renderOwnedItems(items, bookMetadata = {}) {
         <div class="owned-title">${escapeHtml(title)}</div>
         ${author ? `<div class="owned-author">${escapeHtml(author)}</div>` : ""}
         <div class="owned-meta">${escapeHtml(barcode)} ・ ×${escapeHtml(item.quantity ?? 1)}</div>
+        ${provenanceSummary(detailItem.origins)
+          ? `<div class="owned-meta">${escapeHtml(provenanceSummary(detailItem.origins))}</div>`
+          : ""}
       </div>
     `;
 
@@ -566,6 +591,18 @@ purchaseBtn.addEventListener("click", async () => {
   const token = getShareToken();
   if (!token || !currentBarcode) return;
 
+  const label = getGuestLabel();
+  if (!label) {
+    window.KoreMotteruGuestIdentity?.requestLabel?.();
+    setBarcodeStatus(
+      "呼ばれ方を登録してください",
+      "購入した人として残すため、「じいじ」などこの家で呼ばれている名前を先に登録してください。",
+      currentBarcode,
+      "warn"
+    );
+    return;
+  }
+
   purchaseBtn.disabled = true;
   purchaseBtn.textContent = "追加中…";
 
@@ -586,7 +623,7 @@ purchaseBtn.addEventListener("click", async () => {
     plannedQty.textContent = String(result.planned_quantity_after ?? 0);
     setBarcodeStatus(
       "購入予定に追加しました",
-      `数量 ${quantity} を登録しました。`,
+      `${label}の購入予定として、数量 ${quantity} を登録しました。`,
       currentBarcode,
       "ok"
     );
