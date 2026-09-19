@@ -11,6 +11,42 @@
     return params.has("token") ? params.get("token") : raw;
   }
 
+  function tokenFingerprint(value) {
+    let hash = 2166136261;
+    const text = String(value || "");
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function guestLabelStorageKey() {
+    return `kore-motteru-guest-label:${tokenFingerprint(tokenFromHash())}`;
+  }
+
+  function normalizeGuestLabel(value) {
+    return String(value || "").normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, 40);
+  }
+
+  function getGuestLabel() {
+    if (isOwner) return "";
+    try {
+      return normalizeGuestLabel(localStorage.getItem(guestLabelStorageKey()) || "");
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function saveGuestLabel(value) {
+    const label = normalizeGuestLabel(value);
+    if (!label) return "";
+    try {
+      localStorage.setItem(guestLabelStorageKey(), label);
+    } catch (_) {}
+    return label;
+  }
+
   async function rpc(name, body) {
     const response = await fetch(`${SUPABASE_RPC_BASE}/rest/v1/rpc/${name}`, {
       method: "POST",
@@ -26,6 +62,109 @@
       throw new Error(`Supabase ${response.status}: ${detail}`);
     }
     return response.json();
+  }
+
+  function installGuestIdentityCard() {
+    if (isOwner || document.getElementById("guestIdentityCard")) return;
+
+    const main = document.querySelector("main");
+    if (!main) return;
+
+    const style = document.createElement("style");
+    style.textContent = `
+      .guest-identity-card {
+        margin:0 0 16px;
+        padding:14px;
+        border:1px solid rgba(127,127,127,.24);
+        border-radius:16px;
+        background:rgba(127,127,127,.07);
+      }
+      .guest-identity-title { margin:0 0 5px; font-size:16px; font-weight:800; }
+      .guest-identity-copy { margin:0 0 10px; color:#666; font-size:13px; line-height:1.5; }
+      .guest-identity-row { display:flex; gap:8px; }
+      .guest-identity-row input {
+        min-width:0; flex:1; border:1px solid #ccc; border-radius:12px; padding:12px;
+        font:inherit; background:#fff; color:#111;
+      }
+      .guest-identity-row button { width:auto; flex:0 0 auto; padding:11px 14px; font-size:15px; border-radius:12px; }
+      .guest-presets { display:flex; flex-wrap:wrap; gap:7px; margin-top:9px; }
+      .guest-presets button {
+        width:auto; padding:8px 11px; border-radius:999px; font-size:13px;
+        background:#ececec; color:#111;
+      }
+      .guest-identity-saved { margin-top:8px; min-height:18px; color:#137333; font-size:13px; font-weight:700; }
+      @media (prefers-color-scheme: dark) {
+        .guest-identity-copy { color:#aaa; }
+        .guest-identity-row input { background:#202020; color:#fff; border-color:#555; }
+        .guest-presets button { background:#2d2d2d; color:#fff; }
+        .guest-identity-saved { color:#81c995; }
+      }
+    `;
+    document.head.appendChild(style);
+
+    const card = document.createElement("section");
+    card.id = "guestIdentityCard";
+    card.className = "guest-identity-card";
+    card.innerHTML = `
+      <p class="guest-identity-title">この家では、なんて呼ばれていますか？</p>
+      <p class="guest-identity-copy">買った本や贈った本に「誰から」が残ります。この端末だけに呼ばれ方を覚えます。</p>
+      <div class="guest-identity-row">
+        <input id="guestIdentityInput" type="text" maxlength="40" autocomplete="nickname" placeholder="例：じいじ" aria-label="この家での呼ばれ方" />
+        <button id="guestIdentitySave" type="button">保存</button>
+      </div>
+      <div class="guest-presets" aria-label="呼ばれ方の例">
+        <button type="button" data-label="じいじ">じいじ</button>
+        <button type="button" data-label="ばあば">ばあば</button>
+        <button type="button" data-label="おじちゃん">おじちゃん</button>
+        <button type="button" data-label="おばちゃん">おばちゃん</button>
+      </div>
+      <div id="guestIdentitySaved" class="guest-identity-saved" aria-live="polite"></div>
+    `;
+
+    main.insertBefore(card, main.firstChild);
+
+    const input = card.querySelector("#guestIdentityInput");
+    const saveButton = card.querySelector("#guestIdentitySave");
+    const saved = card.querySelector("#guestIdentitySaved");
+
+    const existing = getGuestLabel();
+    if (existing) {
+      input.value = existing;
+      saved.textContent = `「${existing}」として記録します。`;
+    }
+
+    function commit(value) {
+      const label = saveGuestLabel(value);
+      if (!label) {
+        saved.textContent = "呼ばれ方を入力してください。";
+        input.focus();
+        return "";
+      }
+      input.value = label;
+      saved.textContent = `「${label}」として記録します。`;
+      return label;
+    }
+
+    saveButton.addEventListener("click", () => commit(input.value));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commit(input.value);
+      }
+    });
+    card.querySelectorAll("[data-label]").forEach((button) => {
+      button.addEventListener("click", () => commit(button.dataset.label || ""));
+    });
+
+    window.KoreMotteruGuestIdentity = {
+      getLabel: getGuestLabel,
+      requestLabel() {
+        saved.textContent = "先に、あなたの呼ばれ方を登録してください。";
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => input.focus(), 250);
+        return false;
+      },
+    };
   }
 
   function installGuestHandoffButton() {
@@ -49,8 +188,24 @@
     button.addEventListener("click", async () => {
       const token = tokenFromHash();
       const barcode = typeof currentBarcode !== "undefined" ? currentBarcode : null;
-      const qty = typeof quantity !== "undefined" ? Number(quantity) : Number(document.getElementById("qtyValue")?.textContent || 1);
+      const qty = typeof quantity !== "undefined"
+        ? Number(quantity)
+        : Number(document.getElementById("qtyValue")?.textContent || 1);
+      const label = getGuestLabel();
+
       if (!token || !barcode) return;
+      if (!label) {
+        window.KoreMotteruGuestIdentity?.requestLabel();
+        if (typeof setBarcodeStatus === "function") {
+          setBarcodeStatus(
+            "呼ばれ方を登録してください",
+            "「じいじ」など、この家で呼ばれている名前を先に登録してください。",
+            barcode,
+            "warn"
+          );
+        }
+        return;
+      }
 
       button.disabled = true;
       const previousText = button.textContent;
@@ -61,7 +216,7 @@
           p_token: token,
           p_barcode: String(barcode),
           p_buyer_key: typeof getOrCreateBuyerKey === "function" ? getOrCreateBuyerKey() : null,
-          p_sender_label: null,
+          p_sender_label: label,
           p_quantity: Math.max(1, qty || 1),
         });
 
@@ -82,7 +237,7 @@
         if (typeof setBarcodeStatus === "function") {
           setBarcodeStatus(
             "「渡した」を知らせました",
-            `数量 ${Math.max(1, qty || 1)}。相手が「受け取った」を押すと在庫に入ります。`,
+            `${label}から・数量 ${Math.max(1, qty || 1)}。相手が「受け取った」を押すと在庫に入ります。`,
             barcode,
             "ok"
           );
@@ -187,7 +342,8 @@
         }
 
         if (result.accepted === true) {
-          resultBox.textContent = `在庫 ×${result.quantity_before ?? 0} → ×${result.quantity ?? 0}`;
+          const from = result.giver_label ? `${result.giver_label}から・` : "";
+          resultBox.textContent = `${from}在庫 ×${result.quantity_before ?? 0} → ×${result.quantity ?? 0}`;
           button.classList.add("hidden");
           setTimeout(loadPending, 700);
           return;
@@ -234,8 +390,12 @@
 
       const meta = document.createElement("div");
       meta.className = "handoff-meta";
-      const sender = item.sender_label && item.sender_label !== "ゲスト" ? `${item.sender_label}から・` : "";
-      meta.textContent = `${sender}数量 ×${item.quantity} ・ ${item.barcode}`;
+      const giver = item.sender_label && item.sender_label !== "ゲスト" ? item.sender_label : "";
+      const purchaser = item.purchaser_label && item.purchaser_label !== "ゲスト" ? item.purchaser_label : "";
+      const people = giver && purchaser && giver !== purchaser
+        ? `贈り主 ${giver}・購入者 ${purchaser}・`
+        : (giver || purchaser ? `${giver || purchaser}から・` : "");
+      meta.textContent = `${people}数量 ×${item.quantity} ・ ${item.barcode}`;
 
       body.append(name);
       if (metadata.author) {
@@ -309,8 +469,12 @@
 
   function install() {
     if (!SUPABASE_RPC_BASE || !SUPABASE_KEY) return;
-    if (isOwner) installOwnerInbox();
-    else installGuestHandoffButton();
+    if (isOwner) {
+      installOwnerInbox();
+      return;
+    }
+    installGuestIdentityCard();
+    installGuestHandoffButton();
   }
 
   if (document.readyState === "loading") {
