@@ -449,7 +449,7 @@ async function checkBarcodeDirectly(barcode) {
   const token = getShareToken();
   showScanView();
   startBtn.classList.add("hidden");
-  setBarcodeStatus("確認中…", "家の状態を確認しています。", barcode);
+  setBarcodeStatus("確認中…", "家に登録されている本の情報を確認しています。", barcode);
 
   try {
     const state = await getProductState(token, barcode);
@@ -485,7 +485,7 @@ async function handleDecodedBarcode(decodedText) {
   await stopScannerQuietly();
   reader.classList.add("hidden");
   hidePurchasePanel();
-  setBarcodeStatus("確認中…", "家の状態を確認しています。", barcode);
+  setBarcodeStatus("確認中…", "家に登録されている本の情報を確認しています。", barcode);
 
   try {
     const state = await getProductState(token, barcode);
