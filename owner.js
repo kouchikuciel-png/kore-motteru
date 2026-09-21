@@ -14,6 +14,12 @@ const minusBtn = document.getElementById("minusBtn");
 const plusBtn = document.getElementById("plusBtn");
 const qtyValue = document.getElementById("qtyValue");
 const confirmBtn = document.getElementById("confirmBtn");
+const pendingHandoffPanel = document.getElementById("pendingHandoffPanel");
+const pendingHandoffTitle = document.getElementById("pendingHandoffTitle");
+const pendingHandoffText = document.getElementById("pendingHandoffText");
+const acceptPendingBtn = document.getElementById("acceptPendingBtn");
+const reconcilePendingBtn = document.getElementById("reconcilePendingBtn");
+const registerSeparateBtn = document.getElementById("registerSeparateBtn");
 const bookPreview = document.getElementById("bookPreview");
 const bookCover = document.getElementById("bookCover");
 const bookTitle = document.getElementById("bookTitle");
@@ -39,6 +45,7 @@ let ocrWorkerPromise = null;
 let pendingCode = null;
 let pendingSourceLabel = "";
 let pendingOwnedQuantity = 0;
+let pendingHandoffs = [];
 let quantity = 1;
 let tutorialResumeAfterClose = false;
 
@@ -96,6 +103,20 @@ function registerItem(token, barcode, qty) {
     p_token: token,
     p_barcode: barcode,
     p_quantity: qty,
+  });
+}
+
+function acceptHandoff(token, handoffId) {
+  return callRpc("accept_handoff_request", {
+    p_token: token,
+    p_handoff_id: handoffId,
+  });
+}
+
+function reconcileHandoff(token, handoffId) {
+  return callRpc("reconcile_handoff_request", {
+    p_token: token,
+    p_handoff_id: handoffId,
   });
 }
 
@@ -250,8 +271,11 @@ function resetPendingRegistration() {
   pendingCode = null;
   pendingSourceLabel = "";
   pendingOwnedQuantity = 0;
+  pendingHandoffs = [];
   quantity = 1;
   qtyValue.textContent = "1";
+  pendingHandoffPanel.classList.add("hidden");
+  reconcilePendingBtn.classList.add("hidden");
   quantityPanel.classList.add("hidden");
   confirmBtn.disabled = false;
   plusBtn.disabled = false;
@@ -286,6 +310,7 @@ function hideCameraControls() {
 
 function showReadyToRepeat() {
   hideCameraControls();
+  pendingHandoffPanel.classList.add("hidden");
   quantityPanel.classList.add("hidden");
   bookPreview.classList.add("hidden");
   againBtn.classList.remove("hidden");
@@ -350,6 +375,7 @@ async function submitCode(code, sourceLabel) {
   }
 
   hideCameraControls();
+  pendingHandoffPanel.classList.add("hidden");
   quantityPanel.classList.add("hidden");
   againBtn.classList.add("hidden");
   setStatus("確認中…", `${sourceLabel}を確認しました。`, "", barcode);
@@ -378,9 +404,40 @@ async function submitCode(code, sourceLabel) {
     pendingCode = barcode;
     pendingSourceLabel = sourceLabel;
     pendingOwnedQuantity = Number(result.quantity || 0);
+    pendingHandoffs = Array.isArray(result.pending_handoffs) ? result.pending_handoffs : [];
     quantity = 1;
     updateQuantityControls();
     loadBookPreview(barcode);
+
+    if (pendingHandoffs.length > 0) {
+      const handoff = pendingHandoffs[0];
+      const sender = handoff.sender_label && handoff.sender_label !== "ゲスト"
+        ? handoff.sender_label
+        : "ゲスト";
+      const waitingCount = Number(result.pending_handoff_quantity || handoff.quantity || 1);
+
+      setStatus(
+        "受け取り待ちの本です",
+        `${sender}からの受け取り待ちがあります。先にどの出来事か確認してください。`,
+        "warn",
+        barcode
+      );
+
+      pendingHandoffTitle.textContent = `${sender}から・受け取り待ち ×${handoff.quantity}`;
+      pendingHandoffText.textContent = pendingHandoffs.length > 1
+        ? `同じ本の受け取り待ちが${pendingHandoffs.length}件（合計×${waitingCount}）あります。まず古い1件を処理します。`
+        : "この本が受け取り待ちの本なら「受け取った」を選んでください。";
+
+      acceptPendingBtn.textContent = `受け取った（在庫に+${handoff.quantity}）`;
+      reconcilePendingBtn.classList.toggle(
+        "hidden",
+        pendingOwnedQuantity < Number(handoff.quantity || 1)
+      );
+      pendingHandoffPanel.classList.remove("hidden");
+      againBtn.classList.remove("hidden");
+      againBtn.textContent = "別のものを読み取る";
+      return;
+    }
 
     if (result.exists === true) {
       setStatus(
@@ -411,6 +468,108 @@ async function submitCode(code, sourceLabel) {
     resetPendingRegistration();
     showReadyToRepeat();
   }
+}
+
+async function finishPendingHandoff(mode) {
+  if (busy || !pendingCode || pendingHandoffs.length === 0) return;
+
+  const token = getShareToken();
+  if (!token) {
+    setStatus("家主リンクが必要です", "家主専用URLを開いてください。", "error");
+    return;
+  }
+
+  const handoff = pendingHandoffs[0];
+  busy = true;
+  acceptPendingBtn.disabled = true;
+  reconcilePendingBtn.disabled = true;
+  registerSeparateBtn.disabled = true;
+  againBtn.disabled = true;
+
+  const barcode = pendingCode;
+  setStatus(
+    mode === "reconcile" ? "受け取りを整理しています…" : "受け取りを反映しています…",
+    mode === "reconcile"
+      ? "すでに登録済みの在庫と、この受け取り待ちをひもづけています。"
+      : "受け取り待ちの数量を在庫へ反映しています。",
+    "",
+    barcode
+  );
+
+  try {
+    const result = mode === "reconcile"
+      ? await reconcileHandoff(token, handoff.id)
+      : await acceptHandoff(token, handoff.id);
+
+    if (!result || result.valid_token !== true) {
+      setStatus("家主リンクが無効です", "新しい家主専用URLを開いてください。", "error");
+      return;
+    }
+
+    const completed = mode === "reconcile"
+      ? result.reconciled === true
+      : result.accepted === true;
+
+    if (!completed) {
+      const text = result.status === "RECEIVED"
+        ? "この受け取り待ちは、すでに処理済みです。"
+        : "受け取り状態を確認できませんでした。もう一度画面を開き直してください。";
+      setStatus("処理できませんでした", text, "error", barcode);
+      return;
+    }
+
+    if (mode === "reconcile") {
+      setStatus(
+        "受け取り済みにしました",
+        `在庫は増やさず、現在の所有数量 ×${result.quantity ?? pendingOwnedQuantity} のまま来歴だけひもづけました。`,
+        "ok",
+        barcode
+      );
+    } else {
+      setStatus(
+        "受け取りました",
+        `所有数量 ×${result.quantity_before ?? pendingOwnedQuantity} → ×${result.quantity ?? pendingOwnedQuantity + Number(handoff.quantity || 1)}`,
+        "ok",
+        barcode
+      );
+    }
+
+    resetPendingRegistration();
+    showReadyToRepeat();
+    document.dispatchEvent(new CustomEvent("kore-motteru:handoff-updated"));
+  } catch (error) {
+    console.error(error);
+    setStatus("処理できませんでした", "通信状態を確認して、もう一度お試しください。", "error", barcode);
+    pendingHandoffPanel.classList.remove("hidden");
+  } finally {
+    busy = false;
+    acceptPendingBtn.disabled = false;
+    reconcilePendingBtn.disabled = false;
+    registerSeparateBtn.disabled = false;
+    againBtn.disabled = false;
+    updateQuantityControls();
+  }
+}
+
+function registerAsSeparateCopy() {
+  if (!pendingCode) return;
+
+  pendingHandoffPanel.classList.add("hidden");
+  quantity = 1;
+  updateQuantityControls();
+
+  setStatus(
+    pendingOwnedQuantity > 0 ? "別の1冊として追加します" : "別の1冊として登録します",
+    pendingOwnedQuantity > 0
+      ? `受け取り待ちは残したままです。現在の所有数量 ×${pendingOwnedQuantity}`
+      : "受け取り待ちは残したまま、新しい1冊として登録します。",
+    "warn",
+    pendingCode
+  );
+
+  quantityLabel.textContent = pendingOwnedQuantity > 0 ? "追加する数量" : "登録する数量";
+  confirmBtn.textContent = pendingOwnedQuantity > 0 ? "別の1冊として追加する" : "別の1冊として登録する";
+  quantityPanel.classList.remove("hidden");
 }
 
 async function confirmRegistration() {
@@ -767,6 +926,9 @@ plusBtn.addEventListener("click", () => {
 });
 
 confirmBtn.addEventListener("click", confirmRegistration);
+acceptPendingBtn.addEventListener("click", () => finishPendingHandoff("accept"));
+reconcilePendingBtn.addEventListener("click", () => finishPendingHandoff("reconcile"));
+registerSeparateBtn.addEventListener("click", registerAsSeparateCopy);
 startBtn.addEventListener("click", () => startScanner(true));
 againBtn.addEventListener("click", () => startScanner(true));
 ocrBtn.addEventListener("click", () => recognizeIsbnFromCamera(false));
