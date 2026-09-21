@@ -182,6 +182,7 @@ A〜Eを回帰テストで維持できれば「本の家主登録ライン 安�
 - `013_guest_name_and_item_provenance.sql`
 - `014_provenance_visibility.sql`
 - `015_handoff_conflict_and_cancel.sql`
+- `016_cancel_restore_as_new_plan.sql`
 
 ## 初号機でやらないもの
 
