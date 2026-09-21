@@ -22,7 +22,8 @@ for (const htmlFile of ["index.html", "owner.html"]) {
     .map((match) => match[1]);
 
   for (const script of localScripts) {
-    if (!existsSync(`${rootPath}${script}`)) {
+    const localPath = script.split(/[?#]/, 1)[0];
+    if (!existsSync(`${rootPath}${localPath}`)) {
       throw new Error(`${htmlFile}: script not found: ${script}`);
     }
   }
