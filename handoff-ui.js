@@ -746,7 +746,7 @@
         const reconcileButton = document.createElement("button");
         reconcileButton.type = "button";
         reconcileButton.className = "secondary";
-        reconcileButton.textContent = "この分はもう登録済み";
+        reconcileButton.textContent = "この本はもう登録済み";
         actions.appendChild(reconcileButton);
         buttons.push(reconcileButton);
         reconcileButton.addEventListener("click", () => act(item, "reconcile", buttons, resultBox));
