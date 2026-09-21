@@ -20,6 +20,8 @@ const detailCheckBtn = document.getElementById("detailCheckBtn");
 const detailCloseBtn = document.getElementById("detailCloseBtn");
 
 const startBtn = document.getElementById("startBtn");
+const manualEntryForm = document.getElementById("manualEntryForm");
+const manualEntryInput = document.getElementById("manualEntryInput");
 const againBtn = document.getElementById("againBtn");
 const reader = document.getElementById("reader");
 const statusBox = document.getElementById("status");
@@ -641,6 +643,24 @@ purchaseBtn.addEventListener("click", async () => {
   } finally {
     purchaseBtn.disabled = false;
   }
+});
+
+manualEntryForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const barcode = String(manualEntryInput.value || "").replace(/\D/g, "");
+
+  if (!/^\d{8,14}$/.test(barcode)) {
+    setStatus(
+      "番号を確認してください",
+      "バーコードの下にある8〜14桁の数字を入力してください。",
+      "error"
+    );
+    manualEntryInput.focus();
+    return;
+  }
+
+  await stopScannerQuietly();
+  await checkBarcodeDirectly(barcode);
 });
 
 scanNavBtn.addEventListener("click", showScanView);
