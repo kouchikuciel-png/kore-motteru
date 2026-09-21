@@ -18,7 +18,7 @@ for (const file of jsFiles) {
 
 for (const htmlFile of ["index.html", "owner.html"]) {
   const html = readFileSync(`${rootPath}${htmlFile}`, "utf8");
-  const localScripts = [...html.matchAll(/<script\s+[^>]*src=["']\.\/([^"']+)["'][^>]*>/g)]
+  const localScripts = [...html.matchAll(/<script\s+[^>]*src=["\']\.\/([^"\']+)["\'][^>]*>/g)]
     .map((match) => match[1]);
 
   for (const script of localScripts) {
@@ -28,10 +28,35 @@ for (const htmlFile of ["index.html", "owner.html"]) {
   }
 }
 
-for (const required of ["role-ui.js", "docs/role-model.md", "docs/regression-checklist.md", "docs/current-roadmap.md"]) {
+function assertDomIds(jsFile, htmlFile) {
+  const js = readFileSync(`${rootPath}${jsFile}`, "utf8");
+  const html = readFileSync(`${rootPath}${htmlFile}`, "utf8");
+  const ids = [...js.matchAll(/document\.getElementById\(["\']([^"\']+)["\']\)/g)]
+    .map((match) => match[1]);
+
+  for (const id of new Set(ids)) {
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`id=["\']${escaped}["\']`);
+    if (!pattern.test(html)) {
+      throw new Error(`${jsFile}: #${id} not found in ${htmlFile}`);
+    }
+  }
+}
+
+assertDomIds("app.js", "index.html");
+assertDomIds("owner.js", "owner.html");
+
+for (const required of [
+  "role-ui.js",
+  "docs/role-model.md",
+  "docs/regression-checklist.md",
+  "docs/current-roadmap.md",
+  "docs/android-smoke-test.md",
+  "docs/meaningful-gap-design.md",
+]) {
   if (!existsSync(`${rootPath}${required}`)) {
     throw new Error(`required file not found: ${required}`);
   }
 }
 
-console.log(`static check passed: ${jsFiles.length} JavaScript files parsed`);
+console.log(`static check passed: ${jsFiles.length} JavaScript files parsed; DOM ids verified`);
