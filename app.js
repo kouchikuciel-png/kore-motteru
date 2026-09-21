@@ -176,6 +176,90 @@ async function fetchGoogleBooksMetadata(isbn) {
   }
 }
 
+
+function uniqueCoverUrls(values) {
+  const seen = new Set();
+  const urls = [];
+  for (const value of values || []) {
+    const url = String(value || "").trim().replace(/^http:/, "https:");
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return urls;
+}
+
+function coverProxyUrl(source) {
+  return `${SUPABASE_URL}/functions/v1/book-cover-proxy?src=${encodeURIComponent(source)}`;
+}
+
+function expandGuestCoverCandidates(values) {
+  const result = [];
+  for (const source of uniqueCoverUrls(values)) {
+    let googleHost = false;
+    try {
+      const host = new URL(source).hostname.toLowerCase();
+      googleHost = host === "books.google.com" ||
+        host === "books.google.co.jp" ||
+        host.endsWith(".googleusercontent.com");
+    } catch (_) {}
+    if (googleHost) result.push(coverProxyUrl(source), source);
+    else result.push(source, coverProxyUrl(source));
+  }
+  return uniqueCoverUrls(result);
+}
+
+async function fetchGuestCoverFallback(isbn, title, author) {
+  const urls = [];
+  const queries = [
+    `isbn:${isbn}`,
+    title && author ? `intitle:${title} inauthor:${author}` : "",
+    title ? `intitle:${title}` : "",
+  ].filter(Boolean);
+
+  for (const query of queries) {
+    try {
+      const response = await fetch(
+        `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=5&printType=books`
+      );
+      if (!response.ok) continue;
+      const data = await response.json();
+      for (const item of data?.items || []) {
+        const links = item?.volumeInfo?.imageLinks || {};
+        if (item?.id) {
+          urls.push(`https://books.google.com/books/content?id=${encodeURIComponent(item.id)}&printsec=frontcover&img=1&zoom=2&source=gbs_api`);
+        }
+        urls.push(links.large, links.medium, links.small, links.thumbnail, links.smallThumbnail);
+      }
+    } catch (error) {
+      console.warn("Google Books cover fallback unavailable", isbn, error);
+    }
+    if (urls.some(Boolean)) break;
+  }
+
+  if (title) {
+    try {
+      const params = new URLSearchParams({ title, limit: "5" });
+      if (author) params.set("author", author);
+      const response = await fetch(`https://openlibrary.org/search.json?${params.toString()}`);
+      if (response.ok) {
+        const data = await response.json();
+        for (const doc of data?.docs || []) {
+          if (!doc?.cover_i) continue;
+          urls.push(
+            `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`,
+            `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`
+          );
+        }
+      }
+    } catch (error) {
+      console.warn("Open Library cover fallback unavailable", isbn, error);
+    }
+  }
+
+  return uniqueCoverUrls(urls);
+}
+
 function authorNeedsCleanup(author) {
   const value = String(author || "");
   return /,/.test(value) || /\b\d{4}(?:-\d{0,4})?\b/.test(value);
@@ -240,6 +324,23 @@ async function fetchBookMetadata(items) {
     };
   }
 
+  const missingCoverTargets = Object.entries(result)
+    .filter(([, metadata]) => metadata && !metadata.coverUrl)
+    .slice(0, 12);
+
+  const coverFallbacks = await Promise.all(
+    missingCoverTargets.map(async ([isbn, metadata]) => [
+      isbn,
+      await fetchGuestCoverFallback(isbn, metadata.title || "", metadata.author || ""),
+    ])
+  );
+
+  for (const [isbn, coverUrls] of coverFallbacks) {
+    if (!result[isbn] || coverUrls.length === 0) continue;
+    result[isbn].coverUrls = coverUrls;
+    result[isbn].coverUrl = coverUrls[0];
+  }
+
   return result;
 }
 
@@ -271,9 +372,23 @@ function openOwnedDetail(item) {
     `所有 ×${item.quantity}`,
     provenance,
   ].filter(Boolean).join(" ・ ");
-  detailCover.innerHTML = item.coverUrl
-    ? `<img src="${escapeHtml(item.coverUrl)}" alt="${escapeHtml(item.title)}の表紙" />`
+  const detailCoverUrls = Array.isArray(item.coverUrls) && item.coverUrls.length
+    ? item.coverUrls
+    : (item.coverUrl ? [item.coverUrl] : []);
+  detailCover.innerHTML = detailCoverUrls.length
+    ? `<img src="${escapeHtml(detailCoverUrls[0])}" alt="${escapeHtml(item.title)}の表紙" />`
     : `<span aria-hidden="true">${isIsbn13(item.barcode) ? "📚" : "📦"}</span>`;
+  const detailImage = detailCover.querySelector("img");
+  if (detailImage && detailCoverUrls.length > 1) {
+    let coverIndex = 1;
+    detailImage.addEventListener("error", () => {
+      if (coverIndex >= detailCoverUrls.length) {
+        detailCover.innerHTML = '<span aria-hidden="true">📚</span>';
+        return;
+      }
+      detailImage.src = detailCoverUrls[coverIndex++];
+    });
+  }
   detailOverlay.classList.remove("hidden");
 }
 
@@ -297,12 +412,17 @@ function renderOwnedItems(items, bookMetadata = {}) {
     const book = bookMetadata[barcode] || null;
     const title = book?.title || (isIsbn13(barcode) ? "絵本・書籍" : "商品");
     const author = book?.author || "";
-    const coverUrl = book?.coverUrl || "";
+    const coverUrls = expandGuestCoverCandidates([
+      ...(book?.coverUrls || []),
+      book?.coverUrl || "",
+    ]);
+    const coverUrl = coverUrls[0] || "";
     const detailItem = {
       barcode,
       title,
       author,
       coverUrl,
+      coverUrls,
       quantity: Number(item.quantity || 1),
       origins: Array.isArray(item.origins) ? item.origins : [],
     };
@@ -335,6 +455,18 @@ function renderOwnedItems(items, bookMetadata = {}) {
         openOwnedDetail(detailItem);
       }
     });
+
+    const coverImage = article.querySelector(".owned-cover img");
+    if (coverImage && coverUrls.length > 1) {
+      let coverIndex = 1;
+      coverImage.addEventListener("error", () => {
+        if (coverIndex >= coverUrls.length) {
+          coverImage.parentElement.innerHTML = '<span aria-hidden="true">📚</span>';
+          return;
+        }
+        coverImage.src = coverUrls[coverIndex++];
+      });
+    }
 
     ownedList.appendChild(article);
   }
