@@ -262,6 +262,7 @@ async function fetchGuestCoverFallback(isbn, title, author) {
     }
   }
 
+  urls.push(...guestHanmotoCoverCandidates(isbn));
   return uniqueCoverUrls(urls);
 }
 
@@ -425,6 +426,7 @@ function renderOwnedItems(items, bookMetadata = {}) {
     const coverUrls = expandGuestCoverCandidates([
       ...(book?.coverUrls || []),
       book?.coverUrl || "",
+      ...guestHanmotoCoverCandidates(barcode),
     ]);
     const coverUrl = coverUrls[0] || "";
     const detailItem = {
