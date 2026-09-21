@@ -2,6 +2,8 @@ const SUPABASE_URL = "https://dnxllbdagnnjsnadlqly.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_YCQsOS8F6kME99vOsabvUg_R6pr5E54";
 
 const startBtn = document.getElementById("startBtn");
+const manualEntryForm = document.getElementById("manualEntryForm");
+const manualEntryInput = document.getElementById("manualEntryInput");
 const ocrBtn = document.getElementById("ocrBtn");
 const ocrHelp = document.getElementById("ocrHelp");
 const againBtn = document.getElementById("againBtn");
@@ -923,6 +925,25 @@ minusBtn.addEventListener("click", () => {
 plusBtn.addEventListener("click", () => {
   quantity += 1;
   updateQuantityControls();
+});
+
+manualEntryForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const digits = String(manualEntryInput.value || "").replace(/\D/g, "");
+
+  if (!isValidIsbn13(digits)) {
+    setStatus(
+      "本の番号を確認してください",
+      "978 または 979 から始まる13桁の番号を入力してください。",
+      "error",
+      digits
+    );
+    manualEntryInput.focus();
+    return;
+  }
+
+  await stopScannerQuietly();
+  await submitCode(digits, "入力した本の番号");
 });
 
 confirmBtn.addEventListener("click", confirmRegistration);
