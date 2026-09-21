@@ -205,13 +205,20 @@
     .detail-author { margin-top: 6px; color: #666; text-align: center; }
     .detail-meta { margin: 12px 0 16px; color: #666; text-align: center; font-size: 13px; line-height: 1.6; }
     .note { margin: 18px 4px 0; color: #666; font-size: 13px; line-height: 1.6; }
+    .manual-entry { margin-top:12px; }
+    .manual-entry summary { cursor:pointer; color:#666; font-weight:700; text-align:center; padding:8px; }
+    .manual-entry-row { display:flex; gap:8px; margin-top:8px; }
+    .manual-entry-row input { flex:1; min-width:0; border:1px solid #ccc; border-radius:12px; padding:13px; font:inherit; background:#fff; color:#111; }
+    .manual-entry-row button { width:auto; flex:0 0 auto; padding:12px 14px; font-size:15px; }
+    .manual-entry-note { margin:8px 2px 0; color:#777; font-size:12px; line-height:1.5; }
     @media (min-width: 520px) {
       .owned-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
     @media (prefers-color-scheme: dark) {
       body { background: #0f0f0f; color: #fff; }
       .card, .owned-item, .detail-sheet { background: #181818; }
-      .sub, .note, .barcode, .qty-label, .owned-count, .owned-author, .owned-meta, .detail-author, .detail-meta { color: #aaa; }
+      .sub, .note, .barcode, .qty-label, .owned-count, .owned-author, .owned-meta, .detail-author, .detail-meta, .manual-entry summary, .manual-entry-note { color: #aaa; }
+      .manual-entry-row input { background:#202020; color:#fff; border-color:#555; }
       .status, .ng, .state-item, .empty { background: #262626; }
       .state-item span { color: #aaa; }
       .owned-cover, .detail-cover { background: #242424; }
@@ -251,6 +258,14 @@
 
       <section class="card">
         <button id="startBtn">バーコードを確認する</button>
+        <details id="manualEntry" class="manual-entry">
+          <summary>番号を入力して確認する</summary>
+          <form id="manualEntryForm" class="manual-entry-row">
+            <input id="manualEntryInput" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="バーコードの数字" aria-label="バーコード番号" />
+            <button type="submit">確認</button>
+          </form>
+          <p class="manual-entry-note">カメラが使えない時だけ。バーコードの下にある数字を入力できます。</p>
+        </details>
         <div id="reader" class="hidden"></div>
 
         <div id="status" class="status">
