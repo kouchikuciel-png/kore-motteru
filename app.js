@@ -209,6 +209,12 @@ function expandGuestCoverCandidates(values) {
   return uniqueCoverUrls(result);
 }
 
+function guestHanmotoCoverCandidates(isbn) {
+  const normalized = String(isbn || "").replace(/\D/g, "");
+  if (!/^9784\d{9}$/.test(normalized)) return [];
+  return [`https://img.hanmoto.com/bd/img/${normalized}_600.jpg`];
+}
+
 async function fetchGuestCoverFallback(isbn, title, author) {
   const urls = [];
   const queries = [
@@ -234,7 +240,6 @@ async function fetchGuestCoverFallback(isbn, title, author) {
     } catch (error) {
       console.warn("Google Books cover fallback unavailable", isbn, error);
     }
-    if (urls.some(Boolean)) break;
   }
 
   if (title) {
@@ -324,21 +329,26 @@ async function fetchBookMetadata(items) {
     };
   }
 
-  const missingCoverTargets = Object.entries(result)
-    .filter(([, metadata]) => metadata && !metadata.coverUrl)
+  const coverTargets = Object.entries(result)
+    .filter(([, metadata]) => Boolean(metadata))
     .slice(0, 12);
 
   const coverFallbacks = await Promise.all(
-    missingCoverTargets.map(async ([isbn, metadata]) => [
+    coverTargets.map(async ([isbn, metadata]) => [
       isbn,
       await fetchGuestCoverFallback(isbn, metadata.title || "", metadata.author || ""),
     ])
   );
 
-  for (const [isbn, coverUrls] of coverFallbacks) {
-    if (!result[isbn] || coverUrls.length === 0) continue;
+  for (const [isbn, fallbackUrls] of coverFallbacks) {
+    if (!result[isbn]) continue;
+    const coverUrls = uniqueCoverUrls([
+      ...fallbackUrls,
+      ...(result[isbn].coverUrls || []),
+      result[isbn].coverUrl || "",
+    ]);
     result[isbn].coverUrls = coverUrls;
-    result[isbn].coverUrl = coverUrls[0];
+    result[isbn].coverUrl = coverUrls[0] || result[isbn].coverUrl || "";
   }
 
   return result;
