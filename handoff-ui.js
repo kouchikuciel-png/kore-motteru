@@ -243,6 +243,8 @@
           );
         }
 
+        document.dispatchEvent(new CustomEvent("kore-motteru:handoff-updated"));
+
         if (typeof hidePurchasePanel === "function") hidePurchasePanel();
         if (again) {
           again.textContent = "別の商品を確認する";
@@ -257,6 +259,132 @@
         button.disabled = false;
         button.textContent = previousText;
       }
+    });
+  }
+
+  function installGuestPendingHandoffs() {
+    if (isOwner || document.getElementById("guestPendingHandoffs")) return;
+
+    const main = document.querySelector("main");
+    const identity = document.getElementById("guestIdentityCard");
+    if (!main || !identity) return;
+
+    const style = document.createElement("style");
+    style.textContent = `
+      .guest-pending-card {
+        margin:0 0 16px; padding:14px; border-radius:16px;
+        background:#fff; box-shadow:0 2px 12px rgba(0,0,0,.07);
+      }
+      .guest-pending-card h2 { margin:0 0 10px; font-size:18px; }
+      .guest-pending-list { display:grid; gap:9px; }
+      .guest-pending-item { padding:12px; border-radius:12px; background:#f7f7f7; }
+      .guest-pending-meta { color:#666; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+      .guest-pending-item button { margin-top:9px; padding:10px 12px; font-size:14px; }
+      @media (prefers-color-scheme: dark) {
+        .guest-pending-card { background:#181818; }
+        .guest-pending-item { background:#262626; }
+        .guest-pending-meta { color:#aaa; }
+      }
+    `;
+    document.head.appendChild(style);
+
+    const card = document.createElement("section");
+    card.id = "guestPendingHandoffs";
+    card.className = "guest-pending-card hidden";
+    card.innerHTML = `
+      <h2>あなたが渡したもの</h2>
+      <div id="guestPendingHandoffList" class="guest-pending-list"></div>
+    `;
+    identity.insertAdjacentElement("afterend", card);
+
+    const list = card.querySelector("#guestPendingHandoffList");
+
+    async function cancel(item, button) {
+      const token = tokenFromHash();
+      const buyerKey = typeof getOrCreateBuyerKey === "function" ? getOrCreateBuyerKey() : "";
+      if (!token || !buyerKey) return;
+      if (!window.confirm("「渡した」を取り消しますか？")) return;
+
+      button.disabled = true;
+      button.textContent = "取り消しています…";
+
+      try {
+        const result = await rpc("cancel_my_handoff_request", {
+          p_token: token,
+          p_handoff_id: item.id,
+          p_buyer_key: buyerKey,
+        });
+
+        if (!result || result.valid_token !== true || result.cancelled !== true) {
+          button.textContent = result?.status === "RECEIVED"
+            ? "すでに受け取り済みです"
+            : "取り消せませんでした";
+          return;
+        }
+
+        document.dispatchEvent(new CustomEvent("kore-motteru:handoff-updated"));
+        await load();
+      } catch (error) {
+        console.error(error);
+        button.textContent = "通信エラー";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function load() {
+      const token = tokenFromHash();
+      const buyerKey = typeof getOrCreateBuyerKey === "function" ? getOrCreateBuyerKey() : "";
+      if (!token || !buyerKey) {
+        card.classList.add("hidden");
+        return;
+      }
+
+      try {
+        const result = await rpc("get_my_pending_handoffs", {
+          p_token: token,
+          p_buyer_key: buyerKey,
+        });
+        const items = result?.valid_token === true && Array.isArray(result.items) ? result.items : [];
+        list.innerHTML = "";
+
+        if (items.length === 0) {
+          card.classList.add("hidden");
+          return;
+        }
+
+        for (const item of items) {
+          const article = document.createElement("div");
+          article.className = "guest-pending-item";
+
+          const meta = document.createElement("div");
+          meta.className = "guest-pending-meta";
+          const from = item.sender_label && item.sender_label !== "ゲスト"
+            ? `${item.sender_label}から・`
+            : "";
+          meta.textContent = `${from}数量 ×${item.quantity} ・ ${item.barcode}`;
+
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "secondary";
+          button.textContent = "「渡した」を取り消す";
+          button.addEventListener("click", () => cancel(item, button));
+
+          article.append(meta, button);
+          list.appendChild(article);
+        }
+
+        card.classList.remove("hidden");
+      } catch (error) {
+        console.error(error);
+        card.classList.add("hidden");
+      }
+    }
+
+    load();
+    document.addEventListener("kore-motteru:handoff-updated", load);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") load();
     });
   }
 
@@ -452,12 +580,16 @@
       .handoff-cover img { width:100%; height:100%; object-fit:cover; display:block; }
       .handoff-name { min-width:0; font-weight:800; line-height:1.4; overflow-wrap:anywhere; }
       .handoff-meta { margin-top:4px; color:#666; font-size:13px; line-height:1.45; }
+      .handoff-warning { margin:8px 0 0; padding:9px; border-radius:10px; background:#fff4d8; color:#66521a; font-size:13px; line-height:1.5; }
+      .handoff-actions { display:grid; gap:8px; }
+      .handoff-actions button { margin:0; }
       .handoff-result { margin-top:10px; color:#137333; font-weight:700; text-align:center; }
       @media (prefers-color-scheme: dark) {
         .handoff-empty,.handoff-meta,.handoff-hint { color:#aaa !important; }
         .handoff-item { background:#262626; }
         .handoff-cover { background:#303030; }
-        .handoff-count { background:#443712; }
+        .handoff-count,.handoff-warning { background:#443712; }
+        .handoff-warning { color:#e7d799; }
         .handoff-result { color:#81c995; }
       }
     `;
@@ -496,15 +628,23 @@
       return { title: "", author: "", coverUrl: "" };
     }
 
-    async function accept(item, button, resultBox) {
+    async function act(item, action, buttons, resultBox) {
       const token = tokenFromHash();
       if (!token) return;
 
-      button.disabled = true;
-      button.textContent = "反映しています…";
+      if (action === "cancel" && !window.confirm("この受け取り待ちを取り消しますか？")) return;
+
+      buttons.forEach((button) => { button.disabled = true; });
+      resultBox.textContent = action === "cancel" ? "取り消しています…" : "反映しています…";
 
       try {
-        const result = await rpc("accept_handoff_request", {
+        const rpcName = action === "accept"
+          ? "accept_handoff_request"
+          : action === "reconcile"
+            ? "reconcile_handoff_request"
+            : "cancel_owner_handoff_request";
+
+        const result = await rpc(rpcName, {
           p_token: token,
           p_handoff_id: item.id,
         });
@@ -514,23 +654,27 @@
           return;
         }
 
-        if (result.accepted === true) {
+        if (action === "accept" && result.accepted === true) {
           const from = result.giver_label ? `${result.giver_label}から・` : "";
           resultBox.textContent = `${from}在庫 ×${result.quantity_before ?? 0} → ×${result.quantity ?? 0}`;
-          button.classList.add("hidden");
-          setTimeout(loadPending, 700);
+        } else if (action === "reconcile" && result.reconciled === true) {
+          resultBox.textContent = `在庫は ×${result.quantity ?? item.owned_quantity} のまま、受け取り済みにしました。`;
+        } else if (action === "cancel" && result.cancelled === true) {
+          resultBox.textContent = "受け取り待ちを取り消しました。";
+        } else {
+          resultBox.textContent = result.status === "RECEIVED"
+            ? "すでに受け取り済みです。"
+            : "状態を変更できませんでした。";
           return;
         }
 
-        resultBox.textContent = result.status === "RECEIVED"
-          ? "すでに受け取り済みです。"
-          : "受け取り状態を確認できませんでした。";
+        setTimeout(loadPending, 450);
+        document.dispatchEvent(new CustomEvent("kore-motteru:handoff-updated"));
       } catch (error) {
         console.error(error);
         resultBox.textContent = "通信状態を確認して、もう一度お試しください。";
       } finally {
-        button.disabled = false;
-        if (!button.classList.contains("hidden")) button.textContent = "受け取った";
+        buttons.forEach((button) => { button.disabled = false; });
       }
     }
 
@@ -578,17 +722,50 @@
         body.appendChild(author);
       }
       body.appendChild(meta);
+
+      if (Number(item.owned_quantity || 0) > 0) {
+        const owned = document.createElement("div");
+        owned.className = "handoff-warning";
+        owned.textContent = `同じ本を現在 ×${item.owned_quantity} 所有しています。この受け取り分をすでに登録済みなら、二重に増やさず完了できます。`;
+        body.appendChild(owned);
+      }
+
       head.append(cover, body);
 
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = "受け取った";
+      const actions = document.createElement("div");
+      actions.className = "handoff-actions";
+
+      const acceptButton = document.createElement("button");
+      acceptButton.type = "button";
+      acceptButton.textContent = `受け取った（在庫に+${item.quantity}）`;
+      actions.appendChild(acceptButton);
+
+      const buttons = [acceptButton];
+
+      if (Number(item.owned_quantity || 0) >= Number(item.quantity || 1)) {
+        const reconcileButton = document.createElement("button");
+        reconcileButton.type = "button";
+        reconcileButton.className = "secondary";
+        reconcileButton.textContent = "この分はもう登録済み";
+        actions.appendChild(reconcileButton);
+        buttons.push(reconcileButton);
+        reconcileButton.addEventListener("click", () => act(item, "reconcile", buttons, resultBox));
+      }
+
+      const cancelButton = document.createElement("button");
+      cancelButton.type = "button";
+      cancelButton.className = "secondary";
+      cancelButton.textContent = "受け取っていない・取り消す";
+      actions.appendChild(cancelButton);
+      buttons.push(cancelButton);
 
       const resultBox = document.createElement("div");
       resultBox.className = "handoff-result";
 
-      button.addEventListener("click", () => accept(item, button, resultBox));
-      article.append(head, button, resultBox);
+      acceptButton.addEventListener("click", () => act(item, "accept", buttons, resultBox));
+      cancelButton.addEventListener("click", () => act(item, "cancel", buttons, resultBox));
+
+      article.append(head, actions, resultBox);
       return article;
     }
 
@@ -635,6 +812,7 @@
     }
 
     loadPending();
+    document.addEventListener("kore-motteru:handoff-updated", loadPending);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") loadPending();
     });
@@ -648,6 +826,7 @@
       return;
     }
     installGuestIdentityCard();
+    installGuestPendingHandoffs();
     installGuestHandoffButton();
   }
 
