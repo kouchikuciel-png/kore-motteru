@@ -271,7 +271,8 @@ function authorNeedsCleanup(author) {
   return /,/.test(value) || /\b\d{4}(?:-\d{0,4})?\b/.test(value);
 }
 
-async function fetchBookMetadata(items) {
+async function fetchBookMetadata(items, options = {}) {
+  const deepCoverSearch = options.deepCoverSearch !== false;
   const isbns = [...new Set(
     items.map((item) => String(item.barcode)).filter(isIsbn13)
   )];
@@ -330,26 +331,28 @@ async function fetchBookMetadata(items) {
     };
   }
 
-  const coverTargets = Object.entries(result)
-    .filter(([, metadata]) => Boolean(metadata))
-    .slice(0, 12);
+  if (deepCoverSearch) {
+    const coverTargets = Object.entries(result)
+      .filter(([, metadata]) => Boolean(metadata))
+      .slice(0, 12);
 
-  const coverFallbacks = await Promise.all(
-    coverTargets.map(async ([isbn, metadata]) => [
-      isbn,
-      await fetchGuestCoverFallback(isbn, metadata.title || "", metadata.author || ""),
-    ])
-  );
+    const coverFallbacks = await Promise.all(
+      coverTargets.map(async ([isbn, metadata]) => [
+        isbn,
+        await fetchGuestCoverFallback(isbn, metadata.title || "", metadata.author || ""),
+      ])
+    );
 
-  for (const [isbn, fallbackUrls] of coverFallbacks) {
-    if (!result[isbn]) continue;
-    const coverUrls = uniqueCoverUrls([
-      ...fallbackUrls,
-      ...(result[isbn].coverUrls || []),
-      result[isbn].coverUrl || "",
-    ]);
-    result[isbn].coverUrls = coverUrls;
-    result[isbn].coverUrl = coverUrls[0] || result[isbn].coverUrl || "";
+    for (const [isbn, fallbackUrls] of coverFallbacks) {
+      if (!result[isbn]) continue;
+      const coverUrls = uniqueCoverUrls([
+        ...fallbackUrls,
+        ...(result[isbn].coverUrls || []),
+        result[isbn].coverUrl || "",
+      ]);
+      result[isbn].coverUrls = coverUrls;
+      result[isbn].coverUrl = coverUrls[0] || result[isbn].coverUrl || "";
+    }
   }
 
   return result;
@@ -508,8 +511,18 @@ async function loadOwnedItems() {
     }
 
     const items = Array.isArray(result.items) ? result.items : [];
-    const metadata = await fetchBookMetadata(items);
+    const metadata = await fetchBookMetadata(items, { deepCoverSearch: false });
     renderOwnedItems(items, metadata);
+
+    // 一覧を先に見せる。タイトル検索など重い表紙探索は裏で行い、
+    // 終わったら同じ一覧を差し替える。
+    fetchBookMetadata(items, { deepCoverSearch: true })
+      .then((enrichedMetadata) => {
+        if (!ownedView.classList.contains("hidden")) {
+          renderOwnedItems(items, enrichedMetadata);
+        }
+      })
+      .catch((error) => console.warn("Background cover enrichment unavailable", error));
   } catch (error) {
     console.error(error);
     ownedLoading.classList.add("hidden");
