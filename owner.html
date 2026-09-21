@@ -37,6 +37,10 @@
     .book-author { display:block; margin-top:5px; color:#666; line-height:1.45; font-size:14px; }
     .book-loading { color:#777; font-size:14px; }
     .quantity-panel { margin-top:16px; padding:16px; border-radius:16px; background:#f7f7f7; }
+    .handoff-match-panel { margin-top:16px; padding:16px; border-radius:16px; background:#fff4d8; }
+    .handoff-match-title { margin:0 0 8px; font-weight:800; text-align:center; }
+    .handoff-match-copy { margin:0 0 14px; color:#66521a; line-height:1.55; text-align:center; font-size:14px; }
+    .handoff-match-panel button + button { margin-top:10px; }
     .quantity-label { margin:0 0 12px; text-align:center; color:#555; font-weight:700; }
     .quantity-row { display:flex; align-items:center; justify-content:center; gap:18px; margin-bottom:16px; }
     button.quantity-button { width:58px; height:58px; padding:0; border-radius:50%; font-size:30px; line-height:1; }
@@ -77,6 +81,8 @@
       .card,.tutorial-sheet { background:#181818; }
       .note,.barcode,.ocr-help,.quantity-label,.quantity-value small,.book-author,.book-loading,.help-link,.tutorial-lead,.tutorial-caption span { color:#aaa; }
       .status,.ocr-help,.quantity-panel,.book-preview { background:#262626; }
+      .handoff-match-panel { background:#443712; }
+      .handoff-match-copy { color:#e7d799; }
       .book-cover { background:#303030; }
       .ok { background:#17391f; }
       .warn { background:#443712; }
@@ -106,6 +112,14 @@
           <span id="bookAuthor" class="book-author hidden"></span>
           <span id="bookLoading" class="book-loading">表紙や本の名前が見つかれば表示します。</span>
         </div>
+      </div>
+
+      <div id="pendingHandoffPanel" class="handoff-match-panel hidden">
+        <p id="pendingHandoffTitle" class="handoff-match-title">受け取り待ちの本です</p>
+        <p id="pendingHandoffText" class="handoff-match-copy"></p>
+        <button id="acceptPendingBtn" type="button">受け取った</button>
+        <button id="reconcilePendingBtn" class="secondary hidden" type="button">この分はもう登録済み</button>
+        <button id="registerSeparateBtn" class="secondary" type="button">別の1冊として追加する</button>
       </div>
 
       <div id="quantityPanel" class="quantity-panel hidden">
