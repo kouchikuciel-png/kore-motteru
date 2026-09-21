@@ -257,7 +257,7 @@ async function fetchGuestCoverFallback(isbn, title, author) {
     }
   }
 
-  return expandGuestCoverCandidates(urls);
+  return uniqueCoverUrls(urls);
 }
 
 function authorNeedsCleanup(author) {
