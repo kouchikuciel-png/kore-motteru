@@ -29,6 +29,12 @@
     .error { background:#fff0f0; }
     .hidden { display:none !important; }
     .ocr-help { margin-top:14px; padding:14px; border-radius:14px; background:#f3f3f3; color:#666; line-height:1.55; font-size:14px; }
+    .manual-entry { margin-top:12px; }
+    .manual-entry summary { cursor:pointer; color:#666; font-weight:700; text-align:center; padding:8px; }
+    .manual-entry-row { display:flex; gap:8px; margin-top:8px; }
+    .manual-entry-row input { flex:1; min-width:0; border:1px solid #ccc; border-radius:12px; padding:13px; font:inherit; background:#fff; color:#111; }
+    .manual-entry-row button { width:auto; flex:0 0 auto; padding:12px 14px; font-size:15px; }
+    .manual-entry-note { margin:8px 2px 0; color:#777; font-size:12px; line-height:1.5; }
     .book-preview { display:flex; gap:14px; align-items:center; margin-top:16px; padding:14px; border-radius:16px; background:#f7f7f7; text-align:left; }
     .book-cover { flex:0 0 82px; width:82px; height:112px; border-radius:10px; overflow:hidden; display:grid; place-items:center; background:#e9e9e9; font-size:34px; }
     .book-cover img { width:100%; height:100%; object-fit:cover; }
@@ -79,7 +85,8 @@
     @media (prefers-color-scheme: dark) {
       body { background:#0f0f0f; color:#fff; }
       .card,.tutorial-sheet { background:#181818; }
-      .note,.barcode,.ocr-help,.quantity-label,.quantity-value small,.book-author,.book-loading,.help-link,.tutorial-lead,.tutorial-caption span { color:#aaa; }
+      .note,.barcode,.ocr-help,.quantity-label,.quantity-value small,.book-author,.book-loading,.help-link,.tutorial-lead,.tutorial-caption span,.manual-entry summary,.manual-entry-note { color:#aaa; }
+      .manual-entry-row input { background:#202020; color:#fff; border-color:#555; }
       .status,.ocr-help,.quantity-panel,.book-preview { background:#262626; }
       .handoff-match-panel { background:#443712; }
       .handoff-match-copy { color:#e7d799; }
@@ -98,6 +105,14 @@
 
     <section class="card">
       <button id="startBtn" type="button">カメラで登録する</button>
+      <details id="manualEntry" class="manual-entry">
+        <summary>番号を入力する</summary>
+        <form id="manualEntryForm" class="manual-entry-row">
+          <input id="manualEntryInput" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="978から始まる13桁" aria-label="本の番号" />
+          <button type="submit">確認</button>
+        </form>
+        <p class="manual-entry-note">カメラが使えない時だけ。本に書かれた978 / 979から始まる13桁を入力できます。</p>
+      </details>
       <div id="reader" class="hidden"></div>
 
       <button id="ocrBtn" class="secondary hidden" type="button">うまく読めないとき</button>
