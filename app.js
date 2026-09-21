@@ -52,6 +52,9 @@ function getShareToken() {
 }
 
 function getOrCreateBuyerKey() {
+  const managedKey = window.KoreMotteruGuestIdentity?.getKey?.() || "";
+  if (managedKey) return managedKey;
+
   const storageKey = "kore-motteru-buyer-key";
   let key = localStorage.getItem(storageKey);
   if (key) return key;

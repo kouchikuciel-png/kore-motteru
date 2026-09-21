@@ -29,13 +29,27 @@
     return String(value || "").normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, 40);
   }
 
+  const managedGuestIdentity = {
+    resolved: false,
+    managed: false,
+    label: "",
+    key: "",
+  };
+
   function getGuestLabel() {
     if (isOwner) return "";
+    if (managedGuestIdentity.managed) {
+      return normalizeGuestLabel(managedGuestIdentity.label);
+    }
     try {
       return normalizeGuestLabel(localStorage.getItem(guestLabelStorageKey()) || "");
     } catch (_) {
       return "";
     }
+  }
+
+  function getGuestKey() {
+    return managedGuestIdentity.managed ? managedGuestIdentity.key : "";
   }
 
   function saveGuestLabel(value) {
@@ -106,43 +120,82 @@
     card.id = "guestIdentityCard";
     card.className = "guest-identity-card";
     card.innerHTML = `
-      <p class="guest-identity-title">この家では、なんて呼ばれていますか？</p>
-      <p class="guest-identity-copy">買った本や贈った本に「誰から」が残ります。この端末だけに呼ばれ方を覚えます。</p>
+      <p id="guestIdentityTitle" class="guest-identity-title">この家では、なんて呼ばれていますか？</p>
+      <p id="guestIdentityCopy" class="guest-identity-copy">買った本や贈った本に「誰から」が残ります。専用QRから入ると、この家に呼び名を覚えておけます。</p>
       <div class="guest-identity-row">
         <input id="guestIdentityInput" type="text" maxlength="40" autocomplete="nickname" placeholder="例：じいじ" aria-label="この家での呼ばれ方" />
         <button id="guestIdentitySave" type="button">保存</button>
       </div>
-      <div class="guest-presets" aria-label="呼ばれ方の例">
+      <div id="guestIdentityPresets" class="guest-presets" aria-label="呼ばれ方の例">
         <button type="button" data-label="じいじ">じいじ</button>
         <button type="button" data-label="ばあば">ばあば</button>
         <button type="button" data-label="おじちゃん">おじちゃん</button>
         <button type="button" data-label="おばちゃん">おばちゃん</button>
       </div>
-      <div id="guestIdentitySaved" class="guest-identity-saved" aria-live="polite"></div>
+      <div id="guestIdentitySaved" class="guest-identity-saved" aria-live="polite">呼び名を確認しています…</div>
     `;
 
     main.insertBefore(card, main.firstChild);
 
+    const title = card.querySelector("#guestIdentityTitle");
+    const copy = card.querySelector("#guestIdentityCopy");
     const input = card.querySelector("#guestIdentityInput");
     const saveButton = card.querySelector("#guestIdentitySave");
+    const presets = card.querySelector("#guestIdentityPresets");
     const saved = card.querySelector("#guestIdentitySaved");
 
-    const existing = getGuestLabel();
-    if (existing) {
-      input.value = existing;
-      saved.textContent = `「${existing}」として記録します。`;
+    function lockManagedIdentity(label) {
+      const normalized = normalizeGuestLabel(label);
+      managedGuestIdentity.label = normalized;
+      input.value = normalized;
+      input.disabled = true;
+      saveButton.classList.add("hidden");
+      presets.classList.add("hidden");
+      title.textContent = `この家では「${normalized}」として登録されています`;
+      copy.textContent = "この専用QR・リンクから開けば、端末の保存状態に関係なく同じ呼び名で記録されます。";
+      saved.textContent = "呼び名はこの家に保存されています。";
     }
 
-    function commit(value) {
-      const label = saveGuestLabel(value);
+    async function commit(value) {
+      const label = normalizeGuestLabel(value);
       if (!label) {
         saved.textContent = "呼ばれ方を入力してください。";
         input.focus();
         return "";
       }
-      input.value = label;
-      saved.textContent = `「${label}」として記録します。`;
-      return label;
+
+      if (!managedGuestIdentity.resolved) {
+        saved.textContent = "呼び名を確認中です。少し待ってからもう一度お試しください。";
+        return "";
+      }
+
+      if (managedGuestIdentity.managed) {
+        try {
+          saveButton.disabled = true;
+          const result = await rpc("claim_guest_identity", {
+            p_token: tokenFromHash(),
+            p_label: label,
+          });
+          if (!result || result.valid_token !== true || result.managed_guest !== true) {
+            saved.textContent = "呼び名を保存できませんでした。リンクを確認してください。";
+            return "";
+          }
+          managedGuestIdentity.key = String(result.guest_key || "");
+          lockManagedIdentity(result.label || label);
+          return managedGuestIdentity.label;
+        } catch (error) {
+          console.error(error);
+          saved.textContent = "呼び名を保存できませんでした。通信状態を確認してください。";
+          return "";
+        } finally {
+          saveButton.disabled = false;
+        }
+      }
+
+      const localLabel = saveGuestLabel(label);
+      input.value = localLabel;
+      saved.textContent = `「${localLabel}」としてこの端末に記録します。`;
+      return localLabel;
     }
 
     saveButton.addEventListener("click", () => commit(input.value));
@@ -158,13 +211,66 @@
 
     window.KoreMotteruGuestIdentity = {
       getLabel: getGuestLabel,
+      getKey: getGuestKey,
       requestLabel() {
-        saved.textContent = "先に、あなたの呼ばれ方を登録してください。";
+        if (getGuestLabel()) return true;
+        saved.textContent = managedGuestIdentity.resolved
+          ? "先に、あなたの呼ばれ方を登録してください。"
+          : "呼び名を確認しています。少し待ってください。";
         card.scrollIntoView({ behavior: "smooth", block: "center" });
         setTimeout(() => input.focus(), 250);
         return false;
       },
     };
+
+    (async () => {
+      const token = tokenFromHash();
+      if (!token) {
+        managedGuestIdentity.resolved = true;
+        saved.textContent = "共有リンクを開いてください。";
+        return;
+      }
+
+      try {
+        const result = await rpc("get_guest_identity", { p_token: token });
+        managedGuestIdentity.resolved = true;
+
+        if (!result || result.valid_token !== true || result.managed_guest !== true) {
+          managedGuestIdentity.managed = false;
+          const existing = getGuestLabel();
+          if (existing) {
+            input.value = existing;
+            saved.textContent = `「${existing}」としてこの端末に記録しています。`;
+          } else {
+            saved.textContent = "";
+          }
+          return;
+        }
+
+        managedGuestIdentity.managed = true;
+        managedGuestIdentity.key = String(result.guest_key || "");
+        managedGuestIdentity.label = normalizeGuestLabel(result.label || "");
+
+        if (managedGuestIdentity.label) {
+          lockManagedIdentity(managedGuestIdentity.label);
+        } else {
+          title.textContent = "この家では、なんて呼ばれていますか？";
+          copy.textContent = "このQRの初回登録です。ここで決めた呼び名はこの家に保存され、次からは入力不要です。";
+          saved.textContent = "最初の1回だけ呼び名を登録してください。";
+        }
+      } catch (error) {
+        console.error(error);
+        managedGuestIdentity.resolved = true;
+        managedGuestIdentity.managed = false;
+        const existing = getGuestLabel();
+        if (existing) {
+          input.value = existing;
+          saved.textContent = `「${existing}」としてこの端末に記録しています。`;
+        } else {
+          saved.textContent = "呼び名を確認できませんでした。通信状態を確認してください。";
+        }
+      }
+    })();
   }
 
   function installGuestHandoffButton() {
