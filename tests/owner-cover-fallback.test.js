@@ -9,7 +9,9 @@ const source = fs.readFileSync(
   "utf8"
 );
 
-test("prioritizes the deterministic Hanmoto cover for Japanese ISBNs", async () => {
+// 版元ドットコムのURLは実画像が無くても白いプレースホルダーを返すことがあるため、
+// 最終候補として扱う（5b2d902）。
+test("keeps the Hanmoto cover as the last candidate for Japanese ISBNs", async () => {
   const context = {
     console: { warn() {} },
     fetch: async () => ({ ok: false }),
@@ -28,7 +30,29 @@ test("prioritizes the deterministic Hanmoto cover for Japanese ISBNs", async () 
 
   assert.equal(
     metadata.coverUrls[0],
+    "https://covers.openlibrary.org/b/isbn/9784893097576-M.jpg?default=false"
+  );
+  assert.equal(
+    metadata.coverUrls[metadata.coverUrls.length - 1],
     "https://img.hanmoto.com/bd/img/9784893097576_600.jpg"
+  );
+});
+
+test("does not add Hanmoto when no title was found", async () => {
+  const context = {
+    console: { warn() {} },
+    fetch: async () => ({ ok: false }),
+    fetchBookMetadata: async () => ({ title: "", author: "", coverUrl: "", coverUrls: [] }),
+  };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(source, context);
+
+  const metadata = await context.fetchBookMetadata("9784141992776");
+
+  assert.equal(
+    metadata.coverUrls.some((url) => url.includes("hanmoto.com")),
+    false
   );
 });
 
