@@ -32,6 +32,7 @@ OWNERトークンとSHOPトークンは分離したまま維持し、見た目�
 - `docs/role-model.md`
 - `docs/current-roadmap.md`
 - `docs/regression-checklist.md`
+- `docs/beta-device-checklist.md`（初版β 実機確認手順）
 
 ## 現在のGREEN
 

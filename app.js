@@ -141,6 +141,20 @@ function isIsbn13(barcode) {
   return /^97[89]\d{10}$/.test(String(barcode));
 }
 
+// 日本の書籍2段バーコードの下段（192…）は価格・分類コードで、本の識別子ではない。
+// これで照合すると、持っている本でも「重複はありません」と誤表示してしまう。
+function isJapaneseBookPriceCode(barcode) {
+  return /^192\d{10}$/.test(String(barcode));
+}
+
+function setBookPriceCodeStatus() {
+  setStatus(
+    "本の番号ではありません",
+    "本のうらにあるもう1つのバーコード（978から始まる方）を映してください。",
+    "warn"
+  );
+}
+
 async function fetchOpenLibraryMetadata(isbns) {
   if (isbns.length === 0) return {};
 
@@ -637,10 +651,16 @@ async function checkBarcodeDirectly(barcode) {
 
 async function handleDecodedBarcode(decodedText) {
   if (busy) return;
-  busy = true;
 
-  const token = getShareToken();
   const barcode = String(decodedText).trim();
+  if (isJapaneseBookPriceCode(barcode)) {
+    // カメラは止めずに、ISBN側のバーコードを読むまで待つ。
+    setBookPriceCodeStatus();
+    return;
+  }
+
+  busy = true;
+  const token = getShareToken();
 
   await stopScannerQuietly();
   reader.classList.add("hidden");
@@ -815,6 +835,12 @@ manualEntryForm.addEventListener("submit", async (event) => {
       "バーコードの下にある8〜14桁の数字を入力してください。",
       "error"
     );
+    manualEntryInput.focus();
+    return;
+  }
+
+  if (isJapaneseBookPriceCode(barcode)) {
+    setBookPriceCodeStatus();
     manualEntryInput.focus();
     return;
   }

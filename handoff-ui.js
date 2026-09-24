@@ -38,6 +38,8 @@
 
   function getGuestLabel() {
     if (isOwner) return "";
+    // 専用QRかどうかの確認が終わるまでは、端末保存の呼び名や識別子で記録しない。
+    if (!managedGuestIdentity.resolved) return "";
     if (managedGuestIdentity.managed) {
       return normalizeGuestLabel(managedGuestIdentity.label);
     }
@@ -230,7 +232,11 @@
         saved.textContent = "共有リンクを開いてください。";
         return;
       }
+      await resolveIdentity(token);
+      document.dispatchEvent(new CustomEvent("kore-motteru:guest-identity-resolved"));
+    })();
 
+    async function resolveIdentity(token) {
       try {
         const result = await rpc("get_guest_identity", { p_token: token });
         managedGuestIdentity.resolved = true;
@@ -270,7 +276,7 @@
           saved.textContent = "呼び名を確認できませんでした。通信状態を確認してください。";
         }
       }
-    })();
+    }
   }
 
   function installGuestHandoffButton() {
@@ -439,6 +445,8 @@
     }
 
     async function load() {
+      // 専用QRの識別子が確定する前に読むと、端末側の識別子で空一覧になるため待つ。
+      if (!managedGuestIdentity.resolved) return;
       const token = tokenFromHash();
       const buyerKey = typeof getOrCreateBuyerKey === "function" ? getOrCreateBuyerKey() : "";
       if (!token || !buyerKey) {
@@ -488,6 +496,7 @@
     }
 
     load();
+    document.addEventListener("kore-motteru:guest-identity-resolved", load);
     document.addEventListener("kore-motteru:handoff-updated", load);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") load();
