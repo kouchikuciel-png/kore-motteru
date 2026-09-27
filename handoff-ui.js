@@ -290,6 +290,17 @@
     return window.KoreMotteruHandoffEvents || null;
   }
 
+  const COVER_PROXY_BASE = SUPABASE_RPC_BASE ? `${SUPABASE_RPC_BASE}/functions/v1/book-cover-proxy` : "";
+
+  // オーナー本登録・ゲスト本棚と同じ表紙候補チェーン（cover-chain.js）で表紙を入れる。
+  // coverUrls → coverUrl → 各中継候補の順に試し、全部失敗した時だけ📚。
+  function showCoverChain(container, metadata, alt) {
+    const chain = window.KoreMotteruCoverChain;
+    if (!chain) return Promise.resolve({ status: "empty" });
+    const urls = chain.expandCoverCandidates(metadata, COVER_PROXY_BASE);
+    return chain.loadCoverChain(container, urls, { alt });
+  }
+
   function formatWhen(value) {
     return handoffEvents()?.formatHandoffDateTime?.(value) || "";
   }
@@ -609,31 +620,18 @@
       }
     }
 
-    function coverCandidates(metadata, barcode) {
-      const raw = [
-        ...(Array.isArray(metadata?.coverUrls) ? metadata.coverUrls : []),
-        metadata?.coverUrl || "",
-        ...(typeof guestHanmotoCoverCandidates === "function" && metadata?.title
-          ? guestHanmotoCoverCandidates(barcode)
-          : []),
-      ];
-      if (typeof expandGuestCoverCandidates === "function") return expandGuestCoverCandidates(raw);
-      return [...new Set(raw.map((url) => String(url || "").trim()).filter(Boolean))];
-    }
-
-    // 候補を順に試し、全部失敗したら📚のまま（本棚と同じフォールバック）。
+    // 本棚と同じく、書名が分かった本だけ版元ドットコム候補を最後に足す。
     function showCover(cover, metadata, barcode) {
-      const urls = coverCandidates(metadata, barcode);
-      if (!urls.length) return;
-      const img = document.createElement("img");
-      img.alt = metadata?.title ? `${metadata.title}の表紙` : "本の表紙";
-      let index = 0;
-      img.onload = () => cover.replaceChildren(img);
-      img.onerror = () => {
-        index += 1;
-        if (index < urls.length) img.src = urls[index];
+      const withHanmoto = {
+        coverUrls: [
+          ...(Array.isArray(metadata?.coverUrls) ? metadata.coverUrls : []),
+          metadata?.coverUrl || "",
+          ...(typeof guestHanmotoCoverCandidates === "function" && metadata?.title
+            ? guestHanmotoCoverCandidates(barcode)
+            : []),
+        ],
       };
-      img.src = urls[index];
+      showCoverChain(cover, withHanmoto, metadata?.title ? `${metadata.title}の表紙` : "本の表紙");
     }
 
     // 1件の受け取り待ちイベントを1枚のカードにする。同じISBNでもまとめない。
@@ -1057,17 +1055,9 @@
 
       const cover = document.createElement("div");
       cover.className = "handoff-cover";
-      if (metadata.coverUrl) {
-        const img = document.createElement("img");
-        img.src = metadata.coverUrl;
-        img.alt = "";
-        img.onerror = () => {
-          cover.innerHTML = '<span aria-hidden="true">📚</span>';
-        };
-        cover.appendChild(img);
-      } else {
-        cover.innerHTML = '<span aria-hidden="true">📚</span>';
-      }
+      cover.innerHTML = '<span aria-hidden="true">📚</span>';
+      // 1候補の失敗で📚にしない。本登録と同じ候補チェーンで、全滅した時だけ📚のまま。
+      showCoverChain(cover, metadata, metadata.title ? `${metadata.title}の表紙` : "本の表紙");
 
       const body = document.createElement("div");
       const name = document.createElement("div");
