@@ -425,10 +425,14 @@ async function submitCode(code, sourceLabel) {
         barcode
       );
 
+      const handoffWhen = window.KoreMotteruHandoffEvents?.formatHandoffDateTime?.(handoff.created_at) || "";
       pendingHandoffTitle.textContent = `${sender}から・受け取り待ち ×${handoff.quantity}`;
-      pendingHandoffText.textContent = pendingHandoffs.length > 1
-        ? `同じ本の受け取り待ちが${pendingHandoffs.length}件（合計×${waitingCount}）あります。まず古い1件を処理します。`
-        : "この本が受け取り待ちの本なら「受け取った」を選んでください。";
+      pendingHandoffText.textContent = [
+        handoffWhen ? `${handoffWhen} に「渡した」と記録されています。` : "",
+        pendingHandoffs.length > 1
+          ? `同じ本の受け取り待ちが${pendingHandoffs.length}件（合計×${waitingCount}）あります。まず古い1件を処理します。`
+          : "この本が受け取り待ちの本なら「受け取った」を選んでください。",
+      ].join("");
 
       acceptPendingBtn.textContent = `受け取った（在庫に+${handoff.quantity}）`;
       reconcilePendingBtn.classList.toggle(

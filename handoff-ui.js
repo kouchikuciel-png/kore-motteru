@@ -38,6 +38,8 @@
 
   function getGuestLabel() {
     if (isOwner) return "";
+    // 専用QRかどうかの確認が終わるまでは、端末保存の呼び名や識別子で記録しない。
+    if (!managedGuestIdentity.resolved) return "";
     if (managedGuestIdentity.managed) {
       return normalizeGuestLabel(managedGuestIdentity.label);
     }
@@ -230,7 +232,11 @@
         saved.textContent = "共有リンクを開いてください。";
         return;
       }
+      await resolveIdentity(token);
+      document.dispatchEvent(new CustomEvent("kore-motteru:guest-identity-resolved"));
+    })();
 
+    async function resolveIdentity(token) {
       try {
         const result = await rpc("get_guest_identity", { p_token: token });
         managedGuestIdentity.resolved = true;
@@ -270,13 +276,49 @@
           saved.textContent = "呼び名を確認できませんでした。通信状態を確認してください。";
         }
       }
-    })();
+    }
+  }
+
+  function handoffEvents() {
+    return window.KoreMotteruHandoffEvents || null;
+  }
+
+  function formatWhen(value) {
+    return handoffEvents()?.formatHandoffDateTime?.(value) || "";
+  }
+
+  async function fetchMyPendingHandoffs() {
+    const token = tokenFromHash();
+    const buyerKey = typeof getOrCreateBuyerKey === "function" ? getOrCreateBuyerKey() : "";
+    if (!token || !buyerKey) return [];
+    const result = await rpc("get_my_pending_handoffs", {
+      p_token: token,
+      p_buyer_key: buyerKey,
+    });
+    return result?.valid_token === true && Array.isArray(result.items) ? result.items : [];
   }
 
   function installGuestHandoffButton() {
     const panel = document.getElementById("purchasePanel");
     const again = document.getElementById("againBtn");
     if (!panel || document.getElementById("handoffBtn")) return;
+
+    const style = document.createElement("style");
+    style.textContent = `
+      .handoff-duplicate {
+        margin-top:12px; padding:14px; border-radius:14px;
+        background:#fff4d8; color:#4d3d10; line-height:1.55;
+      }
+      .handoff-duplicate-title { margin:0 0 6px; font-size:17px; font-weight:850; }
+      .handoff-duplicate-list { margin:0 0 6px; padding-left:1.2em; font-size:14px; }
+      .handoff-duplicate-list li + li { margin-top:4px; }
+      .handoff-duplicate-note { margin:0 0 10px; font-size:13px; }
+      .handoff-duplicate button + button { margin-top:8px; }
+      @media (prefers-color-scheme: dark) {
+        .handoff-duplicate { background:#443712; color:#f1e3b0; }
+      }
+    `;
+    document.head.appendChild(style);
 
     const button = document.createElement("button");
     button.id = "handoffBtn";
@@ -289,41 +331,93 @@
     hint.textContent = "相手が「受け取った」を押したときに、家の在庫へ反映されます。";
     hint.style.cssText = "margin:10px 4px 0;color:#666;font-size:13px;line-height:1.55;text-align:center;";
 
-    panel.append(button, hint);
+    // 同じ本がすでに受け取り待ちでも禁止しない。押し間違いに気づけるよう確認だけ挟む。
+    const warning = document.createElement("div");
+    warning.id = "handoffDuplicateWarning";
+    warning.className = "handoff-duplicate hidden";
+    warning.setAttribute("role", "alert");
+    warning.innerHTML = `
+      <p class="handoff-duplicate-title">同じ本が受け取り待ちです</p>
+      <ul id="handoffDuplicateList" class="handoff-duplicate-list"></ul>
+      <p id="handoffDuplicateNote" class="handoff-duplicate-note">あとから追加で渡した場合は、そのまま登録できます。</p>
+      <button id="handoffDuplicateConfirm" type="button">それでも「渡した」にする</button>
+      <button id="handoffDuplicateCancel" class="secondary" type="button">やめる</button>
+    `;
 
-    button.addEventListener("click", async () => {
-      const token = tokenFromHash();
-      const barcode = typeof currentBarcode !== "undefined" ? currentBarcode : null;
+    panel.append(button, warning, hint);
+
+    const warningList = warning.querySelector("#handoffDuplicateList");
+    const warningNote = warning.querySelector("#handoffDuplicateNote");
+    const confirmButton = warning.querySelector("#handoffDuplicateConfirm");
+    const cancelButton = warning.querySelector("#handoffDuplicateCancel");
+    let pendingConfirmation = null;
+
+    function hideWarning() {
+      pendingConfirmation = null;
+      warning.classList.add("hidden");
+      warningList.innerHTML = "";
+    }
+
+    function showWarning(existing, barcode, qty) {
+      pendingConfirmation = { barcode, qty };
+      warningList.innerHTML = "";
+      for (const event of existing) {
+        const described = handoffEvents()?.describePendingEvent?.(event) || {
+          text: `「渡した」の記録があります。数量：${Math.max(1, Number(event?.quantity || 1))}冊`,
+        };
+        const item = document.createElement("li");
+        item.textContent = described.text;
+        warningList.appendChild(item);
+      }
+      warningNote.textContent =
+        `あとから追加で渡した場合は、そのまま登録できます（今回：${qty}冊）。` +
+        "前の記録はそのまま残り、別の「渡した」として記録されます。";
+      warning.classList.remove("hidden");
+      warning.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function currentQuantity() {
       const qty = typeof quantity !== "undefined"
         ? Number(quantity)
         : Number(document.getElementById("qtyValue")?.textContent || 1);
+      return Math.max(1, qty || 1);
+    }
+
+    function requireLabel(barcode) {
       const label = getGuestLabel();
-
-      if (!token || !barcode) return;
-      if (!label) {
-        window.KoreMotteruGuestIdentity?.requestLabel();
-        if (typeof setBarcodeStatus === "function") {
-          setBarcodeStatus(
-            "呼ばれ方を登録してください",
-            "「じいじ」など、この家で呼ばれている名前を先に登録してください。",
-            barcode,
-            "warn"
-          );
-        }
-        return;
+      if (label) return label;
+      window.KoreMotteruGuestIdentity?.requestLabel();
+      if (typeof setBarcodeStatus === "function") {
+        setBarcodeStatus(
+          "呼ばれ方を登録してください",
+          "「じいじ」など、この家で呼ばれている名前を先に登録してください。",
+          barcode,
+          "warn"
+        );
       }
+      return "";
+    }
 
-      button.disabled = true;
-      const previousText = button.textContent;
-      button.textContent = "知らせています…";
+    function setBusy(isBusy, text) {
+      button.disabled = isBusy;
+      confirmButton.disabled = isBusy;
+      cancelButton.disabled = isBusy;
+      button.textContent = text || "渡した";
+    }
 
+    // 既存イベントの数量へ足さず、毎回新しい「渡した」イベントを作る。
+    async function createHandoff(barcode, qty, label) {
+      const token = tokenFromHash();
+      if (!token) return;
+
+      setBusy(true, "知らせています…");
       try {
         const result = await rpc("create_handoff_request", {
           p_token: token,
           p_barcode: String(barcode),
           p_buyer_key: typeof getOrCreateBuyerKey === "function" ? getOrCreateBuyerKey() : null,
           p_sender_label: label,
-          p_quantity: Math.max(1, qty || 1),
+          p_quantity: qty,
         });
 
         if (!result || result.valid_token !== true) {
@@ -343,7 +437,7 @@
         if (typeof setBarcodeStatus === "function") {
           setBarcodeStatus(
             "「渡した」を知らせました",
-            `${label}から・数量 ${Math.max(1, qty || 1)}。相手が「受け取った」を押すと在庫に入ります。`,
+            `${label}から・数量 ${qty}。相手が「受け取った」を押すと在庫に入ります。`,
             barcode,
             "ok"
           );
@@ -362,10 +456,61 @@
           setBarcodeStatus("知らせることができませんでした", "通信状態を確認して、もう一度お試しください。", barcode, "error");
         }
       } finally {
-        button.disabled = false;
-        button.textContent = previousText;
+        setBusy(false);
       }
+    }
+
+    button.addEventListener("click", async () => {
+      const token = tokenFromHash();
+      const barcode = typeof currentBarcode !== "undefined" ? currentBarcode : null;
+      if (!token || !barcode) return;
+
+      const label = requireLabel(barcode);
+      if (!label) return;
+
+      const qty = currentQuantity();
+      hideWarning();
+      setBusy(true, "確認しています…");
+
+      let existing = [];
+      try {
+        existing = handoffEvents()?.pendingEventsForBarcode?.(await fetchMyPendingHandoffs(), barcode) || [];
+      } catch (error) {
+        // 確認できなくても「渡した」自体は止めない。
+        console.warn("pending handoff check unavailable", error);
+      }
+
+      if (existing.length > 0) {
+        setBusy(false);
+        showWarning(existing, String(barcode), qty);
+        return;
+      }
+
+      await createHandoff(barcode, qty, label);
     });
+
+    confirmButton.addEventListener("click", async () => {
+      if (!pendingConfirmation) return;
+      const { barcode, qty } = pendingConfirmation;
+      const label = requireLabel(barcode);
+      if (!label) return;
+      hideWarning();
+      await createHandoff(barcode, qty, label);
+    });
+
+    // 「やめる」は何も記録しない。
+    cancelButton.addEventListener("click", hideWarning);
+
+    // 別の本を読んだ・数量を変えた時は、古い確認を残さない。
+    document.getElementById("minusBtn")?.addEventListener("click", hideWarning);
+    document.getElementById("plusBtn")?.addEventListener("click", hideWarning);
+    if (typeof window.renderProductState === "function") {
+      const originalRenderProductState = window.renderProductState;
+      window.renderProductState = function renderProductStateWithHandoffReset(...args) {
+        hideWarning();
+        return originalRenderProductState.apply(this, args);
+      };
+    }
   }
 
   function installGuestPendingHandoffs() {
@@ -386,10 +531,16 @@
       .guest-pending-item { padding:12px; border-radius:12px; background:#f7f7f7; }
       .guest-pending-meta { color:#666; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
       .guest-pending-item button { margin-top:9px; padding:10px 12px; font-size:14px; }
+      .guest-pending-when { margin-top:6px; font-size:14px; line-height:1.45; font-weight:750; }
+      .guest-pending-status {
+        display:inline-block; margin-top:6px; padding:3px 9px; border-radius:999px;
+        background:#fff4d8; color:#66521a; font-size:12px; font-weight:800;
+      }
       @media (prefers-color-scheme: dark) {
         .guest-pending-card { background:#181818; }
         .guest-pending-item { background:#262626; }
         .guest-pending-meta { color:#aaa; }
+        .guest-pending-status { background:#443712; color:#e7d799; }
       }
     `;
     document.head.appendChild(style);
@@ -404,12 +555,17 @@
     identity.insertAdjacentElement("afterend", card);
 
     const list = card.querySelector("#guestPendingHandoffList");
+    let loadSequence = 0;
 
     async function cancel(item, button) {
       const token = tokenFromHash();
       const buyerKey = typeof getOrCreateBuyerKey === "function" ? getOrCreateBuyerKey() : "";
       if (!token || !buyerKey) return;
-      if (!window.confirm("「渡した」を取り消しますか？")) return;
+      const when = formatWhen(item.created_at);
+      const confirmText = when
+        ? `${when} の「渡した」（${item.quantity}冊）を取り消しますか？`
+        : "「渡した」を取り消しますか？";
+      if (!window.confirm(confirmText)) return;
 
       button.disabled = true;
       button.textContent = "取り消しています…";
@@ -438,20 +594,128 @@
       }
     }
 
-    async function load() {
-      const token = tokenFromHash();
-      const buyerKey = typeof getOrCreateBuyerKey === "function" ? getOrCreateBuyerKey() : "";
-      if (!token || !buyerKey) {
-        card.classList.add("hidden");
+    function coverCandidates(metadata, barcode) {
+      const raw = [
+        ...(Array.isArray(metadata?.coverUrls) ? metadata.coverUrls : []),
+        metadata?.coverUrl || "",
+        ...(typeof guestHanmotoCoverCandidates === "function" && metadata?.title
+          ? guestHanmotoCoverCandidates(barcode)
+          : []),
+      ];
+      if (typeof expandGuestCoverCandidates === "function") return expandGuestCoverCandidates(raw);
+      return [...new Set(raw.map((url) => String(url || "").trim()).filter(Boolean))];
+    }
+
+    // 候補を順に試し、全部失敗したら📚のまま（本棚と同じフォールバック）。
+    function showCover(cover, metadata, barcode) {
+      const urls = coverCandidates(metadata, barcode);
+      if (!urls.length) return;
+      const img = document.createElement("img");
+      img.alt = metadata?.title ? `${metadata.title}の表紙` : "本の表紙";
+      let index = 0;
+      img.onload = () => cover.replaceChildren(img);
+      img.onerror = () => {
+        index += 1;
+        if (index < urls.length) img.src = urls[index];
+      };
+      img.src = urls[index];
+    }
+
+    // 1件の受け取り待ちイベントを1枚のカードにする。同じISBNでもまとめない。
+    function renderEvent(item) {
+      const barcode = String(item.barcode || "");
+      const isBook = /^97[89]\d{10}$/.test(barcode);
+      const quantity = Math.max(1, Number(item.quantity || 1));
+
+      const article = document.createElement("div");
+      article.className = "guest-pending-item";
+      article.dataset.readableHandoff = "1";
+      article.dataset.handoffId = String(item.id);
+
+      const book = document.createElement("div");
+      book.className = "guest-pending-book";
+
+      const cover = document.createElement("div");
+      cover.className = "guest-pending-cover";
+      cover.innerHTML = `<span aria-hidden="true">${isBook ? "📚" : "📦"}</span>`;
+
+      const body = document.createElement("div");
+      body.className = "guest-pending-book-body";
+
+      const title = document.createElement("div");
+      title.className = "guest-pending-title";
+      title.textContent = isBook ? "本の情報を読み込み中…" : "商品";
+
+      const author = document.createElement("div");
+      author.className = "guest-pending-author";
+      author.hidden = true;
+
+      const people = document.createElement("div");
+      people.className = "guest-pending-human-meta";
+      const sender = item.sender_label && item.sender_label !== "ゲスト" ? item.sender_label : "";
+      people.textContent = `${sender ? `${sender}から ・ ` : ""}×${quantity}冊`;
+
+      const when = document.createElement("div");
+      when.className = "guest-pending-when";
+      const whenText = formatWhen(item.created_at);
+      when.textContent = whenText ? `${whenText} に渡した` : "渡した日時の記録がありません";
+
+      const status = document.createElement("span");
+      status.className = "guest-pending-status";
+      status.textContent = "受け取り待ち";
+
+      const isbn = document.createElement("div");
+      isbn.className = "guest-pending-isbn";
+      isbn.textContent = `${isBook ? "ISBN" : "コード"} ${barcode}`;
+
+      body.append(title, author, people, when, status, isbn);
+      book.append(cover, body);
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary";
+      button.textContent = "「渡した」を取り消す";
+      button.addEventListener("click", () => cancel(item, button));
+
+      article.append(book, button);
+      return { article, barcode, isBook, cover, title, author };
+    }
+
+    async function fillBookInfo(rendered, sequence) {
+      const books = rendered.filter((entry) => entry.isBook);
+      if (!books.length) return;
+      if (typeof fetchBookMetadata !== "function") {
+        books.forEach((entry) => { entry.title.textContent = "本"; });
         return;
       }
 
+      let metadataByIsbn = {};
       try {
-        const result = await rpc("get_my_pending_handoffs", {
-          p_token: token,
-          p_buyer_key: buyerKey,
-        });
-        const items = result?.valid_token === true && Array.isArray(result.items) ? result.items : [];
+        metadataByIsbn = await fetchBookMetadata(books.map((entry) => ({ barcode: entry.barcode }))) || {};
+      } catch (error) {
+        console.warn("pending handoff metadata unavailable", error);
+      }
+      if (sequence !== loadSequence) return;
+
+      for (const entry of books) {
+        const metadata = metadataByIsbn[entry.barcode] || null;
+        entry.title.textContent = metadata?.title || "本";
+        if (metadata?.author) {
+          entry.author.textContent = metadata.author;
+          entry.author.hidden = false;
+        }
+        showCover(entry.cover, metadata, entry.barcode);
+      }
+    }
+
+    async function load() {
+      // 専用QRの識別子が確定する前に読むと、端末側の識別子で空一覧になるため待つ。
+      if (!managedGuestIdentity.resolved) return;
+      const sequence = ++loadSequence;
+
+      try {
+        const items = await fetchMyPendingHandoffs();
+        if (sequence !== loadSequence) return;
         list.innerHTML = "";
 
         if (items.length === 0) {
@@ -459,35 +723,19 @@
           return;
         }
 
-        for (const item of items) {
-          const article = document.createElement("div");
-          article.className = "guest-pending-item";
-
-          const meta = document.createElement("div");
-          meta.className = "guest-pending-meta";
-          const from = item.sender_label && item.sender_label !== "ゲスト"
-            ? `${item.sender_label}から・`
-            : "";
-          meta.textContent = `${from}数量 ×${item.quantity} ・ ${item.barcode}`;
-
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "secondary";
-          button.textContent = "「渡した」を取り消す";
-          button.addEventListener("click", () => cancel(item, button));
-
-          article.append(meta, button);
-          list.appendChild(article);
-        }
-
+        // サーバーが返す新しい順のまま、1イベント1件で表示する。
+        const rendered = items.map(renderEvent);
+        rendered.forEach((entry) => list.appendChild(entry.article));
         card.classList.remove("hidden");
+        await fillBookInfo(rendered, sequence);
       } catch (error) {
         console.error(error);
-        card.classList.add("hidden");
+        if (sequence === loadSequence) card.classList.add("hidden");
       }
     }
 
     load();
+    document.addEventListener("kore-motteru:guest-identity-resolved", load);
     document.addEventListener("kore-motteru:handoff-updated", load);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") load();
@@ -820,6 +1068,12 @@
         : (giver || purchaser ? `${giver || purchaser}から・` : "");
       meta.textContent = `${people}数量 ×${item.quantity} ・ ${item.barcode}`;
 
+      // 受け取りはイベント単位。同じ本が複数あっても、いつの「渡した」か分かるようにする。
+      const when = document.createElement("div");
+      when.className = "handoff-meta handoff-when";
+      const whenText = formatWhen(item.created_at);
+      when.textContent = whenText ? `${whenText} に「渡した」` : "渡した日時の記録がありません";
+
       body.append(name);
       if (metadata.author) {
         const author = document.createElement("div");
@@ -828,6 +1082,7 @@
         body.appendChild(author);
       }
       body.appendChild(meta);
+      body.appendChild(when);
 
       if (Number(item.owned_quantity || 0) > 0) {
         const owned = document.createElement("div");
