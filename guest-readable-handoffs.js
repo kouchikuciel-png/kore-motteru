@@ -121,6 +121,37 @@
     return { barcode, quantity: Math.max(1, quantity || 1), sender };
   }
 
+  function pendingCoverCandidates(metadata) {
+    const seen = new Set();
+    const urls = [];
+    for (const value of [
+      ...(Array.isArray(metadata?.coverUrls) ? metadata.coverUrls : []),
+      metadata?.coverUrl || "",
+    ]) {
+      const url = String(value || "").trim().replace(/^http:/, "https:");
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      urls.push(url);
+    }
+    return urls;
+  }
+
+  function showPendingCover(cover, metadata) {
+    const urls = pendingCoverCandidates(metadata);
+    if (!urls.length) return;
+
+    const img = document.createElement("img");
+    img.alt = metadata?.title ? `${metadata.title}の表紙` : "本の表紙";
+    let index = 0;
+
+    img.onload = () => cover.replaceChildren(img);
+    img.onerror = () => {
+      index += 1;
+      if (index < urls.length) img.src = urls[index];
+    };
+    img.src = urls[index];
+  }
+
   async function enhancePendingItem(article) {
     if (!article || article.dataset.readableHandoff === "1") return;
     const originalMeta = article.querySelector(".guest-pending-meta");
@@ -168,7 +199,8 @@
     }
 
     try {
-      const metadata = await fetchBookMetadata(barcode);
+      const metadataByIsbn = await fetchBookMetadata([{ barcode }]);
+      const metadata = metadataByIsbn?.[barcode] || null;
       title.textContent = metadata?.title || "本";
 
       if (metadata?.author) {
@@ -176,13 +208,7 @@
         author.hidden = false;
       }
 
-      if (metadata?.coverUrl) {
-        const img = document.createElement("img");
-        img.src = metadata.coverUrl;
-        img.alt = metadata?.title ? `${metadata.title}の表紙` : "本の表紙";
-        img.onload = () => cover.replaceChildren(img);
-        img.onerror = () => {};
-      }
+      showPendingCover(cover, metadata);
     } catch (error) {
       console.warn("pending handoff metadata unavailable", error);
       title.textContent = "本";
