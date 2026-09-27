@@ -43,6 +43,20 @@ function tick() {
 
 const NOT_FOUND = Symbol("not found");
 
+// 018 と同じく、専用QRのトークンでは本人をトークンから決め、クライアントの p_buyer_key を使わない。
+function effectiveKey(token, clientKey) {
+  if (token === GUEST_TOKEN) return GUEST_KEY;
+  if (token === OTHER_GUEST_TOKEN) return OTHER_GUEST_KEY;
+  const key = String(clientKey || "").trim();
+  return key && !key.startsWith("guest:") ? key : null;
+}
+const spoofAttempts = [];
+function noteKey(b) {
+  const key = effectiveKey(b.p_token, b.p_buyer_key);
+  if (b.p_buyer_key && b.p_buyer_key !== key) spoofAttempts.push(b.p_buyer_key);
+  return key;
+}
+
 function productState(barcode) {
   const owned = db.items.get(barcode) || 0;
   const planned = db.plans.filter((p) => p.barcode === barcode).reduce((sum, p) => sum + p.quantity, 0);
@@ -70,28 +84,28 @@ const rpcHandlers = {
   get_guest_product_state: (b) => {
     if (db.withoutGuestProductState) return NOT_FOUND;
     const state = productState(b.p_barcode);
-    const mine = pendingFor(b.p_buyer_key)
+    const mine = pendingFor(noteKey(b))
       .filter((h) => h.barcode === b.p_barcode)
       .sort((a, c) => a.created_at.localeCompare(c.created_at))
       .map(({ id, barcode, quantity, status, created_at }) => ({ id, barcode, quantity, status, created_at }));
     return { ...state, my_pending_handoffs: mine, duplicate: state.duplicate || mine.length > 0 };
   },
   add_purchase_plan: (b) => {
-    db.plans.push({ barcode: b.p_barcode, quantity: b.p_quantity, buyer_key: b.p_buyer_key });
+    db.plans.push({ barcode: b.p_barcode, quantity: b.p_quantity, buyer_key: noteKey(b) });
     return { valid_token: true, planned_quantity_after: productState(b.p_barcode).planned_quantity };
   },
-  get_my_pending_handoffs: (b) => ({ valid_token: true, items: pendingFor(b.p_buyer_key) }),
+  get_my_pending_handoffs: (b) => ({ valid_token: true, items: pendingFor(noteKey(b)) }),
   create_handoff_request: (b) => {
     db.createCalls += 1;
     const event = {
-      id: db.nextId++, barcode: b.p_barcode, quantity: b.p_quantity, sender_key: b.p_buyer_key,
+      id: db.nextId++, barcode: b.p_barcode, quantity: b.p_quantity, sender_key: noteKey(b),
       sender_label: b.p_sender_label, status: "PENDING", created_at: tick(), received_at: null, cancelled_at: null,
     };
     db.handoffs.push(event);
     return { valid_token: true, valid_barcode: true, valid_quantity: true, handoff_id: event.id, status: "PENDING" };
   },
   cancel_my_handoff_request: (b) => {
-    const event = db.handoffs.find((h) => h.id === b.p_handoff_id && h.sender_key === b.p_buyer_key);
+    const event = db.handoffs.find((h) => h.id === b.p_handoff_id && h.sender_key === noteKey(b));
     if (!event || event.status !== "PENDING") return { valid_token: true, cancelled: false, status: event?.status };
     event.status = "CANCELLED";
     event.cancelled_at = tick();
@@ -339,6 +353,15 @@ try {
   assert.equal(await grandma.isVisible("#guestPendingHandoffs"), false);
   assert.equal(await grandma.textContent("#plannedQty"), "0");
   log("別のゲストには、じいじの受け取り待ちの存在・日時・数量を一切出さない");
+
+  // 12b. 画面側の識別子を別人（ばあば）のものに書き換えても、本人の分しか見えない（サーバーが本人を決める）
+  await guest.evaluate((key) => { window.getOrCreateBuyerKey = () => key; }, OTHER_GUEST_KEY);
+  await checkIsbn(guest, ISBN_A);
+  await expectMyPendingStatus(guest);
+  assert.ok(spoofAttempts.includes(OTHER_GUEST_KEY), "改ざんしたキーが実際に送られている");
+  await guest.reload();
+  await guest.waitForSelector("#guestIdentityInput[disabled]");
+  log("クライアントが別人の識別子を送っても、表示されるのは本人の受け取り待ちだけ");
 
   // 13. 018 未適用のDB（新RPCが404）でも、既存RPCの組み合わせで同じ表示になる
   db.withoutGuestProductState = true;

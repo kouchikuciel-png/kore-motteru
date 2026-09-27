@@ -217,9 +217,10 @@ test("ゲストの重複確認は本人の受け取り待ちを含め、イベ�
   assert.equal(theirs.planned_quantity, 0);
   assert.deepEqual(Object.keys(theirs).sort(), ["duplicate", "my_pending_handoffs", "owned_quantity", "planned_quantity", "valid_token"]);
 
-  // 本人識別子が無い・違う場合も漏らさない。既存RPCの結果も変えない。
-  assert.deepEqual(rpc("get_guest_product_state", guest.guest_token, ISBN_C, null).my_pending_handoffs, []);
-  assert.deepEqual(rpc("get_guest_product_state", guest.guest_token, ISBN_C, "someone-else").my_pending_handoffs, []);
+  // 専用QRでは本人をトークンから決める。クライアントの識別子が空・別の値でも、本人の分だけを返す。
+  const ownIds = mine.my_pending_handoffs.map((event) => event.id);
+  assert.deepEqual(rpc("get_guest_product_state", guest.guest_token, ISBN_C, null).my_pending_handoffs.map((e) => e.id), ownIds);
+  assert.deepEqual(rpc("get_guest_product_state", guest.guest_token, ISBN_C, "someone-else").my_pending_handoffs.map((e) => e.id), ownIds);
   assert.equal(rpc("get_household_product_state", guest.guest_token, ISBN_C).duplicate, false);
   assert.equal(rpc("get_guest_product_state", "invalid-token", ISBN_C, guest.guest_key).valid_token, false);
 
@@ -234,6 +235,118 @@ test("ゲストの重複確認は本人の受け取り待ちを含め、イベ�
   assert.equal(received.duplicate, true);
   assert.equal(rpc("get_guest_product_state", other.guest_token, ISBN_C, other.guest_key).owned_quantity, 2,
     "受取後の在庫は全ゲストに見える（既存仕様）");
+});
+
+// ---- 本人識別のなりすまし対策（専用QRでは p_buyer_key を信用しない） ----
+
+const ISBN_D = "9784001106879";
+const LEGACY_SHOP_TOKEN = "legacy-shared-shop-link";
+const CHECK_TOKEN = "legacy-check-only-link";
+
+function addShareToken(token, permission) {
+  sql(`
+    insert into public.share_tokens (household_id, token_hash, permission)
+    select h.id, encode(extensions.digest(${literal(token)}, 'sha256'), 'hex'), ${literal(permission)}
+    from public.households h where h.display_name = '新井家・試験'
+  `);
+}
+
+// 返ってきたJSONに、指定したイベントの痕跡（ID・日時・数量の組）が含まれていないことを確かめる。
+function assertNoTraceOf(result, events, message) {
+  const text = JSON.stringify(result);
+  for (const event of events) {
+    assert.equal(text.includes(`"id":${event.id},`) || text.includes(`"id":${event.id}}`), false, `${message}: id ${event.id}`);
+    assert.equal(text.includes(String(event.created_at).slice(0, 19)), false, `${message}: created_at`);
+    const created = new Date(event.created_at).toISOString().slice(0, 19);
+    assert.equal(text.includes(created), false, `${message}: created_at (ISO)`);
+  }
+}
+
+test("クロスゲスト: じいじのトークン＋ばあばの guest_key では、ばあばの情報を返さない・操作できない", { skip }, () => {
+  const baba = rpc("create_owner_guest_invite", OWNER_TOKEN, "ばあば");
+  const babaFirst = eventRow(rpc("create_handoff_request", baba.guest_token, ISBN_D, baba.guest_key, "ばあば", 1).handoff_id);
+  const babaSecond = eventRow(rpc("create_handoff_request", baba.guest_token, ISBN_D, baba.guest_key, "ばあば", 2).handoff_id);
+  const babaEvents = [babaFirst, babaSecond];
+  assert.equal(babaFirst.sender_key, baba.guest_key);
+
+  // 重複確認: じいじには ISBN_D の受け取り待ちが無いので、重複なし・件数ゼロ。
+  const state = rpc("get_guest_product_state", guest.guest_token, ISBN_D, baba.guest_key);
+  assert.equal(state.valid_token, true);
+  assert.deepEqual(state.my_pending_handoffs, []);
+  assert.equal(state.duplicate, false);
+  assertNoTraceOf(state, babaEvents, "get_guest_product_state");
+
+  // 受け取り待ち一覧: じいじ本人の分だけ。ばあばのイベントは存在も件数も出ない。
+  const jijiOwn = rpc("get_my_pending_handoffs", guest.guest_token, guest.guest_key);
+  const spoofed = rpc("get_my_pending_handoffs", guest.guest_token, baba.guest_key);
+  assert.deepEqual(spoofed, jijiOwn, "別人のキーを送っても、じいじ本人の一覧と同じ");
+  assert.ok(spoofed.items.every((item) => item.sender_label === "じいじ"));
+  assertNoTraceOf(spoofed, babaEvents, "get_my_pending_handoffs");
+
+  // 取消: ばあばのイベントIDとキーを送っても取り消せない（存在も示さない）。
+  const cancel = rpc("cancel_my_handoff_request", guest.guest_token, babaFirst.id, baba.guest_key);
+  assert.deepEqual(cancel, { valid_token: true, request_found: false, cancelled: false });
+  assert.equal(eventRow(babaFirst.id).status, "PENDING");
+
+  // 「渡した」: ばあばのキー・呼び名を送っても、じいじ名義で記録される。
+  const created = eventRow(rpc("create_handoff_request", guest.guest_token, ISBN_D, baba.guest_key, "ばあば", 1).handoff_id);
+  assert.equal(created.sender_key, guest.guest_key);
+  assert.equal(created.sender_label, "じいじ");
+
+  // 購入予定: ばあばのキー・呼び名を送っても、じいじ名義で記録される。
+  const plan = rpc("add_purchase_plan", guest.guest_token, ISBN_D, baba.guest_key, "ばあば", 1, "GIFT_SECRET");
+  assert.equal(plan.buyer_key, guest.guest_key);
+  assert.deepEqual(rows(`select buyer_key, buyer_label from public.purchase_plans where id = ${Number(plan.plan_id)}`),
+    [{ buyer_key: guest.guest_key, buyer_label: "じいじ" }]);
+
+  // ばあば本人から見た一覧は、じいじの操作の影響を受けない。
+  const babaView = rpc("get_my_pending_handoffs", baba.guest_token, null);
+  assert.deepEqual(babaView.items.map((item) => item.id), [babaSecond.id, babaFirst.id]);
+  assert.deepEqual(babaView.items.map((item) => item.quantity), [2, 1]);
+  assert.deepEqual(rpc("get_guest_product_state", baba.guest_token, ISBN_D, guest.guest_key).my_pending_handoffs.map((e) => e.id),
+    [babaFirst.id, babaSecond.id], "逆方向（ばあばのトークン＋じいじのキー）でも、ばあば本人の分だけ");
+});
+
+test("CHECKトークンでは、ゲスト個人の受け取り待ちを返さない", { skip }, () => {
+  addShareToken(CHECK_TOKEN, "CHECK");
+  const babaKey = rows(`select sender_key from public.handoff_requests where barcode = ${literal(ISBN_D)} and sender_label = 'ばあば' limit 1`)[0].sender_key;
+
+  const state = rpc("get_guest_product_state", CHECK_TOKEN, ISBN_D, babaKey);
+  assert.equal(state.valid_token, true);
+  assert.deepEqual(state.my_pending_handoffs, []);
+  assert.equal(rpc("get_guest_product_state", CHECK_TOKEN, ISBN_D, guest.guest_key).my_pending_handoffs.length, 0);
+  assert.equal(rpc("get_my_pending_handoffs", CHECK_TOKEN, babaKey).valid_token, false);
+  assert.equal(rpc("cancel_my_handoff_request", CHECK_TOKEN, 1, babaKey).valid_token, false);
+});
+
+test("従来の共有リンク（専用QRでないSHOP）は端末識別子で動き続け、guest: の人物にはなりすませない", { skip }, () => {
+  addShareToken(LEGACY_SHOP_TOKEN, "SHOP");
+  const deviceKey = "device-7f3c2a";
+
+  // 互換: 端末識別子で記録・一覧・取消ができる。
+  const own = eventRow(rpc("create_handoff_request", LEGACY_SHOP_TOKEN, ISBN_D, deviceKey, "おじちゃん", 1).handoff_id);
+  assert.equal(own.sender_key, deviceKey);
+  assert.equal(own.sender_label, "おじちゃん");
+  assert.deepEqual(rpc("get_my_pending_handoffs", LEGACY_SHOP_TOKEN, deviceKey).items.map((i) => i.id), [own.id]);
+  assert.deepEqual(rpc("get_guest_product_state", LEGACY_SHOP_TOKEN, ISBN_D, deviceKey).my_pending_handoffs.map((e) => e.id), [own.id]);
+
+  // 専用QRの人物キー（guest:）は受け付けない。
+  const babaEvents = rows(`select id, created_at, quantity from public.handoff_requests
+                           where barcode = ${literal(ISBN_D)} and sender_label = 'ばあば' and status = 'PENDING' order by id`);
+  const babaKey = rows(`select sender_key from public.handoff_requests where id = ${babaEvents[0].id}`)[0].sender_key;
+  const listed = rpc("get_my_pending_handoffs", LEGACY_SHOP_TOKEN, babaKey);
+  assert.deepEqual(listed.items, []);
+  assertNoTraceOf(listed, babaEvents, "legacy get_my_pending_handoffs");
+  const state = rpc("get_guest_product_state", LEGACY_SHOP_TOKEN, ISBN_D, babaKey);
+  assert.deepEqual(state.my_pending_handoffs, []);
+  assertNoTraceOf(state, babaEvents, "legacy get_guest_product_state");
+  assert.equal(rpc("cancel_my_handoff_request", LEGACY_SHOP_TOKEN, babaEvents[0].id, babaKey).request_found, false);
+  assert.equal(eventRow(babaEvents[0].id).status, "PENDING");
+  const spoofCreate = eventRow(rpc("create_handoff_request", LEGACY_SHOP_TOKEN, ISBN_D, babaKey, "ばあば", 1).handoff_id);
+  assert.equal(spoofCreate.sender_key, null, "guest: キーでは記録しない（誰の一覧にも出ない）");
+
+  // 取消も互換どおり。
+  assert.equal(rpc("cancel_my_handoff_request", LEGACY_SHOP_TOKEN, own.id, deviceKey).cancelled, true);
 });
 
 test("018 適用前の既存データは壊さず、取消日時を捏造しない", { skip }, () => {
