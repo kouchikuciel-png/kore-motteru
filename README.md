@@ -184,6 +184,8 @@ A〜Eを回帰テストで維持できれば「本の家主登録ライン 安�
 - `014_provenance_visibility.sql`
 - `015_handoff_conflict_and_cancel.sql`
 - `016_cancel_restore_as_new_plan.sql`
+- `017_guest_invite_qr_identity.sql`
+- `018_handoff_event_timeline.sql`
 
 ## 初号機でやらないもの
 
