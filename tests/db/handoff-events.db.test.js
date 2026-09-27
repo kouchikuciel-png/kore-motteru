@@ -342,11 +342,83 @@ test("従来の共有リンク（専用QRでないSHOP）は端末識別子で�
   assertNoTraceOf(state, babaEvents, "legacy get_guest_product_state");
   assert.equal(rpc("cancel_my_handoff_request", LEGACY_SHOP_TOKEN, babaEvents[0].id, babaKey).request_found, false);
   assert.equal(eventRow(babaEvents[0].id).status, "PENDING");
-  const spoofCreate = eventRow(rpc("create_handoff_request", LEGACY_SHOP_TOKEN, ISBN_D, babaKey, "ばあば", 1).handoff_id);
-  assert.equal(spoofCreate.sender_key, null, "guest: キーでは記録しない（誰の一覧にも出ない）");
-
   // 取消も互換どおり。
   assert.equal(rpc("cancel_my_handoff_request", LEGACY_SHOP_TOKEN, own.id, deviceKey).cancelled, true);
+});
+
+function tableCounts() {
+  return rows(`select
+    (select count(*) from public.handoff_requests)::int as handoffs,
+    (select count(*) from public.purchase_plans)::int as plans,
+    (select count(*) from public.handoff_plan_consumptions)::int as consumptions`)[0];
+}
+
+test("従来の共有リンクで予約済みの guest: キー・空キーを送っても、行を一切作らない", { skip }, () => {
+  const babaKey = rows(`select sender_key from public.handoff_requests
+                        where barcode = ${literal(ISBN_D)} and sender_label = 'ばあば' limit 1`)[0].sender_key;
+  assert.match(babaKey, /^guest:/);
+  const allBefore = rows("select id, status, quantity, sender_key from public.handoff_requests order by id");
+  const plansBefore = rows("select id, status, quantity, buyer_key from public.purchase_plans order by id");
+  const countsBefore = tableCounts();
+  const plannedBefore = rpc("get_household_product_state", LEGACY_SHOP_TOKEN, ISBN_D).planned_quantity;
+
+  for (const key of [babaKey, `  ${babaKey}  `, "guest:anything", "", "   ", null]) {
+    const handoffResult = rpc("create_handoff_request", LEGACY_SHOP_TOKEN, ISBN_D, key, "ばあば", 1);
+    assert.deepEqual(handoffResult,
+      { valid_token: true, valid_barcode: true, valid_quantity: true, valid_buyer: false }, `handoff key=${JSON.stringify(key)}`);
+    const planResult = rpc("add_purchase_plan", LEGACY_SHOP_TOKEN, ISBN_D, key, "ばあば", 3, "GIFT_SECRET");
+    assert.deepEqual(planResult, { valid_token: true, valid_buyer: false }, `plan key=${JSON.stringify(key)}`);
+  }
+
+  assert.deepEqual(tableCounts(), countsBefore, "handoff_requests / purchase_plans / 消費記録の行数が増えない");
+  assert.equal(rpc("get_household_product_state", LEGACY_SHOP_TOKEN, ISBN_D).planned_quantity, plannedBefore,
+    "家全体の planned_quantity が増えない");
+  assert.deepEqual(rows("select id, status, quantity, sender_key from public.handoff_requests order by id"), allBefore,
+    "既存の受け渡しデータを変更しない");
+  assert.deepEqual(rows("select id, status, quantity, buyer_key from public.purchase_plans order by id"), plansBefore,
+    "既存の購入予定を変更しない");
+});
+
+test("従来の共有リンクの通常の端末キーでは、購入予定→渡した→一覧→取消が引き続き動く", { skip }, () => {
+  const deviceKey = "device-2b91e0";
+  const before = tableCounts();
+  const plannedBefore = rpc("get_household_product_state", LEGACY_SHOP_TOKEN, ISBN_D).planned_quantity;
+
+  const plan = rpc("add_purchase_plan", LEGACY_SHOP_TOKEN, ISBN_D, deviceKey, "おばちゃん", 2, "GIFT_SECRET");
+  assert.equal(plan.valid_token, true);
+  assert.equal(plan.buyer_key, deviceKey);
+  assert.equal(plan.planned_quantity_after, plannedBefore + 2);
+
+  const handoffResult = rpc("create_handoff_request", LEGACY_SHOP_TOKEN, ISBN_D, deviceKey, "おばちゃん", 1);
+  assert.equal(handoffResult.status, "PENDING");
+  assert.equal(handoffResult.planned_quantity_consumed, 1, "自分の購入予定だけを消費する");
+  const event = eventRow(handoffResult.handoff_id);
+  assert.equal(event.sender_key, deviceKey);
+  assert.equal(event.sender_label, "おばちゃん");
+
+  assert.deepEqual(rpc("get_my_pending_handoffs", LEGACY_SHOP_TOKEN, deviceKey).items.map((i) => i.id), [event.id]);
+  assert.deepEqual(rpc("get_guest_product_state", LEGACY_SHOP_TOKEN, ISBN_D, deviceKey).my_pending_handoffs.map((e) => e.id), [event.id]);
+
+  const cancelled = rpc("cancel_my_handoff_request", LEGACY_SHOP_TOKEN, event.id, deviceKey);
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(cancelled.restored_planned_quantity, 1);
+  assert.deepEqual(rpc("get_my_pending_handoffs", LEGACY_SHOP_TOKEN, deviceKey).items, []);
+
+  const after = tableCounts();
+  assert.equal(after.handoffs, before.handoffs + 1);
+  assert.ok(after.plans > before.plans);
+});
+
+test("専用QRでは識別子を送らなくても、サーバー導出の本人キーで記録される", { skip }, () => {
+  const before = tableCounts();
+  const event = eventRow(rpc("create_handoff_request", guest.guest_token, ISBN_D, null, null, 1).handoff_id);
+  assert.equal(event.sender_key, guest.guest_key);
+  assert.equal(event.sender_label, "じいじ");
+  const plan = rpc("add_purchase_plan", guest.guest_token, ISBN_D, "", null, 1, "GIFT_SECRET");
+  assert.equal(plan.buyer_key, guest.guest_key);
+  assert.equal(tableCounts().handoffs, before.handoffs + 1);
+  rpc("cancel_my_handoff_request", guest.guest_token, event.id, null);
+  assert.equal(eventRow(event.id).status, "CANCELLED");
 });
 
 test("018 適用前の既存データは壊さず、取消日時を捏造しない", { skip }, () => {

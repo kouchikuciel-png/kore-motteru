@@ -22,6 +22,7 @@ const OWNER_TOKEN = "local_owner";
 const GUEST_KEY = "guest:local-jiji";
 const OTHER_GUEST_TOKEN = "kmtg_local_other";
 const OTHER_GUEST_KEY = "guest:local-baba";
+const LEGACY_SHOP_TOKEN = "legacy_shared_link";
 
 // ---- 模擬バックエンド（ページ再読込・別端末をまたいで状態を保持する） ----
 const db = {
@@ -72,7 +73,9 @@ function pendingFor(key) {
 }
 
 const rpcHandlers = {
-  get_guest_identity: (b) => (b.p_token === OTHER_GUEST_TOKEN
+  get_guest_identity: (b) => (b.p_token === LEGACY_SHOP_TOKEN
+    ? { valid_token: true, managed_guest: false }
+    : b.p_token === OTHER_GUEST_TOKEN
     ? { valid_token: true, managed_guest: true, guest_key: OTHER_GUEST_KEY, label: "ばあば" }
     : { valid_token: true, managed_guest: true, guest_key: GUEST_KEY, label: "じいじ" }),
   get_household_owned_items: () => ({
@@ -91,14 +94,18 @@ const rpcHandlers = {
     return { ...state, my_pending_handoffs: mine, duplicate: state.duplicate || mine.length > 0 };
   },
   add_purchase_plan: (b) => {
-    db.plans.push({ barcode: b.p_barcode, quantity: b.p_quantity, buyer_key: noteKey(b) });
+    const key = noteKey(b);
+    if (!key) return { valid_token: true, valid_buyer: false }; // 018: 本人が決まらなければ何も作らない
+    db.plans.push({ barcode: b.p_barcode, quantity: b.p_quantity, buyer_key: key });
     return { valid_token: true, planned_quantity_after: productState(b.p_barcode).planned_quantity };
   },
   get_my_pending_handoffs: (b) => ({ valid_token: true, items: pendingFor(noteKey(b)) }),
   create_handoff_request: (b) => {
+    const key = noteKey(b);
+    if (!key) return { valid_token: true, valid_barcode: true, valid_quantity: true, valid_buyer: false };
     db.createCalls += 1;
     const event = {
-      id: db.nextId++, barcode: b.p_barcode, quantity: b.p_quantity, sender_key: noteKey(b),
+      id: db.nextId++, barcode: b.p_barcode, quantity: b.p_quantity, sender_key: key,
       sender_label: b.p_sender_label, status: "PENDING", created_at: tick(), received_at: null, cancelled_at: null,
     };
     db.handoffs.push(event);
@@ -362,6 +369,37 @@ try {
   await guest.reload();
   await guest.waitForSelector("#guestIdentityInput[disabled]");
   log("クライアントが別人の識別子を送っても、表示されるのは本人の受け取り待ちだけ");
+
+  // 12c. 従来の共有リンクで予約済みの guest: キーを送ると、サーバーは何も記録せず、画面も成功扱いしない
+  const legacyContext = await browser.newContext({ locale: "ja-JP" });
+  await legacyContext.addInitScript(() => {
+    for (const key of Object.keys(localStorage)) localStorage.removeItem(key);
+  });
+  const legacy = await preparePage(legacyContext);
+  await legacy.goto(`${BASE}/index.html#token=${LEGACY_SHOP_TOKEN}`);
+  await legacy.fill("#guestIdentityInput", "おじちゃん");
+  await legacy.click("#guestIdentitySave");
+  await legacy.waitForFunction(() => document.getElementById("guestIdentitySaved").textContent.includes("おじちゃん"));
+  await legacy.evaluate((key) => { window.getOrCreateBuyerKey = () => key; }, OTHER_GUEST_KEY);
+  const beforeSpoof = { handoffs: db.handoffs.length, plans: db.plans.length };
+  await checkIsbn(legacy, ISBN_A);
+  await legacy.click("#purchaseBtn");
+  await legacy.waitForFunction(() => document.getElementById("status").textContent.includes("追加できませんでした"));
+  await checkIsbn(legacy, ISBN_A);
+  await legacy.click("#handoffBtn");
+  await legacy.waitForFunction(() => document.getElementById("status").textContent.includes("知らせることができませんでした"));
+  assert.deepEqual({ handoffs: db.handoffs.length, plans: db.plans.length }, beforeSpoof, "行が増えない");
+  log("従来リンク＋予約済み guest: キーでは購入予定・渡したを記録せず、画面も失敗として表示");
+
+  // 12d. 従来リンクの通常の端末キーでは、これまでどおり記録できる
+  await legacy.evaluate(() => { window.getOrCreateBuyerKey = () => "device-legacy-1"; });
+  await checkIsbn(legacy, ISBN_A);
+  await legacy.click("#purchaseBtn");
+  await legacy.waitForFunction(() => document.getElementById("status").textContent.includes("購入予定に追加しました"));
+  assert.equal(db.plans.length, beforeSpoof.plans + 1);
+  assert.equal(db.plans.at(-1).buyer_key, "device-legacy-1");
+  db.plans.pop();
+  log("従来リンクの通常の端末キーでは購入予定を記録できる");
 
   // 13. 018 未適用のDB（新RPCが404）でも、既存RPCの組み合わせで同じ表示になる
   db.withoutGuestProductState = true;

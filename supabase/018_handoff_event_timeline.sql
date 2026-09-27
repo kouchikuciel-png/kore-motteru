@@ -23,6 +23,8 @@
 --    従来の共有リンク（guest_profiles に紐づかないSHOPトークン）は端末ごとの識別子で
 --    動いているため互換のため p_buyer_key を使うが、'guest:' で始まる値
 --    （専用QRの人物用に予約）は受け付けない。CHECKトークンでは個人の情報を返さない。
+--    本人が決まらない場合、create_handoff_request / add_purchase_plan は行を一切作らず
+--    { valid_token: true, valid_buyer: false } を返す（既存の valid_* 応答と同じ形式）。
 --    対象: get_guest_product_state / get_my_pending_handoffs / cancel_my_handoff_request /
 --          create_handoff_request / add_purchase_plan
 --
@@ -517,6 +519,17 @@ begin
   -- クライアントから別人の p_buyer_key を送っても、その人の名義では記録しない。
   v_buyer_key := public.guest_effective_buyer_key(v_share_token_id, p_buyer_key);
 
+  -- 本人が決まらない（従来リンクで識別子が空、または専用QR用に予約された 'guest:' を指定）
+  -- 場合は、誰のものでもない行を作らず、何も記録せずに返す。
+  if v_buyer_key is null then
+    return jsonb_build_object(
+      'valid_token', true,
+      'valid_barcode', true,
+      'valid_quantity', true,
+      'valid_buyer', false
+    );
+  end if;
+
   select nullif(left(trim(coalesce(gp.label, '')), 40), '')
     into v_managed_label
   from public.guest_profiles gp
@@ -669,6 +682,12 @@ begin
 
   -- 購入者（本人）はサーバーで決める。専用QRでは guest_profiles の人物と呼び名を使う。
   v_buyer_key := public.guest_effective_buyer_key(v_share_token_id, p_buyer_key);
+
+  -- 本人が決まらない（従来リンクで識別子が空、または予約済みの 'guest:' を指定）場合は、
+  -- 購入予定を作らず、家全体の planned_quantity も増やさずに返す。
+  if v_buyer_key is null then
+    return jsonb_build_object('valid_token', true, 'valid_buyer', false);
+  end if;
 
   select nullif(left(trim(coalesce(gp.label, '')), 40), '')
     into v_managed_label

@@ -843,6 +843,17 @@ purchaseBtn.addEventListener("click", async () => {
       return;
     }
 
+    // 本人が確認できない時、サーバーは購入予定を作らない。
+    if (result.valid_buyer === false) {
+      setBarcodeStatus(
+        "追加できませんでした",
+        "ページを開き直して、もう一度お試しください。",
+        currentBarcode,
+        "error"
+      );
+      return;
+    }
+
     plannedQty.textContent = String(result.planned_quantity_after ?? 0);
     setBarcodeStatus(
       "購入予定に追加しました",

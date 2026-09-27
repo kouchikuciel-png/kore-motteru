@@ -441,6 +441,14 @@
           return;
         }
 
+        // 本人が確認できない時、サーバーは何も記録しない。
+        if (result.valid_buyer === false) {
+          if (typeof setBarcodeStatus === "function") {
+            setBarcodeStatus("知らせることができませんでした", "ページを開き直して、もう一度お試しください。", barcode, "error");
+          }
+          return;
+        }
+
         if (typeof setBarcodeStatus === "function") {
           setBarcodeStatus(
             "「渡した」を知らせました",
