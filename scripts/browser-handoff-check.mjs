@@ -20,6 +20,8 @@ const ISBN_A = "9784834000825";
 const GUEST_TOKEN = "kmtg_local_guest";
 const OWNER_TOKEN = "local_owner";
 const GUEST_KEY = "guest:local-jiji";
+const OTHER_GUEST_TOKEN = "kmtg_local_other";
+const OTHER_GUEST_KEY = "guest:local-baba";
 
 // ---- 模擬バックエンド（ページ再読込・別端末をまたいで状態を保持する） ----
 const db = {
@@ -27,13 +29,24 @@ const db = {
   nextId: 1,
   handoffs: [],
   items: new Map(),
+  plans: [],
   createCalls: 0,
+  // true の間は get_guest_product_state が無いDB（018未適用）として 404 を返す。
+  withoutGuestProductState: false,
 };
 
 function tick() {
   const at = new Date(db.clock).toISOString();
   db.clock += 15 * 60 * 1000;
   return at;
+}
+
+const NOT_FOUND = Symbol("not found");
+
+function productState(barcode) {
+  const owned = db.items.get(barcode) || 0;
+  const planned = db.plans.filter((p) => p.barcode === barcode).reduce((sum, p) => sum + p.quantity, 0);
+  return { valid_token: true, owned_quantity: owned, planned_quantity: planned, duplicate: owned + planned > 0 };
 }
 
 function pendingFor(key) {
@@ -45,17 +58,28 @@ function pendingFor(key) {
 }
 
 const rpcHandlers = {
-  get_guest_identity: () => ({ valid_token: true, managed_guest: true, guest_key: GUEST_KEY, label: "じいじ" }),
+  get_guest_identity: (b) => (b.p_token === OTHER_GUEST_TOKEN
+    ? { valid_token: true, managed_guest: true, guest_key: OTHER_GUEST_KEY, label: "ばあば" }
+    : { valid_token: true, managed_guest: true, guest_key: GUEST_KEY, label: "じいじ" }),
   get_household_owned_items: () => ({
     valid_token: true,
     items: [...db.items.entries()].map(([barcode, quantity]) => ({ barcode, quantity, origins: [] })),
   }),
-  get_household_product_state: (b) => ({
-    valid_token: true,
-    owned_quantity: db.items.get(b.p_barcode) || 0,
-    planned_quantity: 0,
-    duplicate: (db.items.get(b.p_barcode) || 0) > 0,
-  }),
+  get_household_product_state: (b) => productState(b.p_barcode),
+  // 018: 在庫・購入予定・本人の受け取り待ち（他のゲストの分は返さない）
+  get_guest_product_state: (b) => {
+    if (db.withoutGuestProductState) return NOT_FOUND;
+    const state = productState(b.p_barcode);
+    const mine = pendingFor(b.p_buyer_key)
+      .filter((h) => h.barcode === b.p_barcode)
+      .sort((a, c) => a.created_at.localeCompare(c.created_at))
+      .map(({ id, barcode, quantity, status, created_at }) => ({ id, barcode, quantity, status, created_at }));
+    return { ...state, my_pending_handoffs: mine, duplicate: state.duplicate || mine.length > 0 };
+  },
+  add_purchase_plan: (b) => {
+    db.plans.push({ barcode: b.p_barcode, quantity: b.p_quantity, buyer_key: b.p_buyer_key });
+    return { valid_token: true, planned_quantity_after: productState(b.p_barcode).planned_quantity };
+  },
   get_my_pending_handoffs: (b) => ({ valid_token: true, items: pendingFor(b.p_buyer_key) }),
   create_handoff_request: (b) => {
     db.createCalls += 1;
@@ -132,10 +156,12 @@ async function preparePage(context) {
     const name = route.request().url().split("/rpc/")[1];
     const handler = rpcHandlers[name];
     const body = JSON.parse(route.request().postData() || "{}");
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify(handler ? handler(body) : { valid_token: true }),
-    });
+    const result = handler ? handler(body) : { valid_token: true };
+    if (result === NOT_FOUND) {
+      route.fulfill({ status: 404, contentType: "application/json", body: '{"code":"PGRST202"}' });
+      return;
+    }
+    route.fulfill({ contentType: "application/json", body: JSON.stringify(result) });
   });
   return page;
 }
@@ -146,9 +172,9 @@ async function shot(page, name) {
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, `${name}.png`), fullPage: true });
 }
 
-async function openGuest(context) {
+async function openGuest(context, token = GUEST_TOKEN) {
   const page = await preparePage(context);
-  await page.goto(`${BASE}/index.html#token=${GUEST_TOKEN}`);
+  await page.goto(`${BASE}/index.html#token=${token}`);
   await page.waitForSelector("#guestIdentityInput[disabled]");
   return page;
 }
@@ -273,6 +299,55 @@ try {
   assert.deepEqual((await pendingCards(guest)).map((c) => c.id), [3, 1]);
   assert.equal(db.handoffs[1].status, "CANCELLED");
   log("1イベントの取消で、他のイベントは受け取り待ちのまま");
+
+  // 11. 本人が同じ本を再確認 →「受け取り待ちがあります」とイベントごとの日時・数量。拒否せず続行できる
+  async function expectMyPendingStatus(page) {
+    await page.waitForFunction(() => document.getElementById("status").textContent.includes("受け取り待ちがあります"));
+    const lines = await page.$$eval("#status .my-pending-list li", (nodes) => nodes.map((node) => [
+      node.querySelector(".my-pending-when")?.textContent,
+      node.querySelector(".my-pending-quantity")?.textContent,
+    ]));
+    assert.deepEqual(lines, [
+      ["9月27日 13:20に「渡した」と記録されています", "数量：1冊"],
+      ["9月27日 13:50に「渡した」と記録されています", "数量：2冊"],
+    ], "同じISBNの受け取り待ちを合算せず、古い順に1件ずつ");
+    assert.equal(await page.textContent("#purchaseBtn"), "それでも購入予定に入れる");
+    assert.equal(await page.isEnabled("#purchaseBtn"), true);
+    assert.equal(await page.isVisible("#handoffBtn"), true);
+  }
+  await checkIsbn(guest, ISBN_A);
+  await expectMyPendingStatus(guest);
+  await shot(guest, "04-my-pending-on-check");
+  await guest.click("#purchaseBtn");
+  await guest.waitForFunction(() => document.getElementById("status").textContent.includes("購入予定に追加しました"));
+  assert.equal(db.plans.length, 1, "受け取り待ちがあっても購入予定へ続行できる");
+  log("本人が同じ本を再確認すると「受け取り待ちがあります」と各イベントの日時・数量を示し、続行もできる");
+
+  // 12. 他のゲストには本人の受け取り待ちを示唆しない
+  db.plans.length = 0;
+  const grandmaContext = await browser.newContext({ locale: "ja-JP" });
+  const grandma = await openGuest(grandmaContext, OTHER_GUEST_TOKEN);
+  await checkIsbn(grandma, ISBN_A);
+  await grandma.waitForFunction(() => document.getElementById("status").textContent.includes("重複はありません"));
+  const grandmaText = await grandma.innerText("body"); // 画面に見えている文字だけ
+  assert.equal(grandmaText.includes("受け取り待ち"), false);
+  assert.equal(grandmaText.includes("13:20"), false);
+  const grandmaDom = await grandma.textContent("body"); // 非表示要素も含めて、他人の記録が入っていない
+  assert.equal(grandmaDom.includes("13:20"), false);
+  assert.equal(grandmaDom.includes("じいじから"), false);
+  assert.equal(grandmaDom.includes("13:50"), false);
+  assert.equal(await grandma.isVisible("#guestPendingHandoffs"), false);
+  assert.equal(await grandma.textContent("#plannedQty"), "0");
+  log("別のゲストには、じいじの受け取り待ちの存在・日時・数量を一切出さない");
+
+  // 13. 018 未適用のDB（新RPCが404）でも、既存RPCの組み合わせで同じ表示になる
+  db.withoutGuestProductState = true;
+  await checkIsbn(guest, ISBN_A);
+  await expectMyPendingStatus(guest);
+  await checkIsbn(grandma, ISBN_A);
+  await grandma.waitForFunction(() => document.getElementById("status").textContent.includes("重複はありません"));
+  db.withoutGuestProductState = false;
+  log("018 未適用のDBでもフォールバックで同じ判定（他ゲストへの非表示も同じ）");
 
   // 8. オーナーが1イベントを受け取っても、他は受け取り待ちのまま
   const ownerContext = await browser.newContext({ locale: "ja-JP" });

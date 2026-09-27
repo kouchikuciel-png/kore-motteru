@@ -65,11 +65,34 @@
     };
   }
 
+  // ゲストの重複確認結果に「本人の受け取り待ち」を重ねる。
+  // get_guest_product_state が使えない環境（018未適用）で、既存の
+  // get_household_product_state と get_my_pending_handoffs から同じ形を作るために使う。
+  // 受け取り待ちはイベントごとに残し、数量を合算しない。
+  function mergeGuestProductState(state, myEvents, barcode) {
+    const base = state || {};
+    const myPending = pendingEventsForBarcode(myEvents, barcode).map((event) => ({
+      id: event.id,
+      barcode: String(event.barcode || ""),
+      quantity: Math.max(1, Number(event.quantity || 1)),
+      status: "PENDING",
+      created_at: event.created_at || null,
+    }));
+    const owned = Number(base.owned_quantity || 0);
+    const planned = Number(base.planned_quantity || 0);
+    return {
+      ...base,
+      my_pending_handoffs: myPending,
+      duplicate: Boolean(base.duplicate) || owned + planned > 0 || myPending.length > 0,
+    };
+  }
+
   const api = {
     TIME_ZONE,
     formatHandoffDateTime,
     pendingEventsForBarcode,
     describePendingEvent,
+    mergeGuestProductState,
   };
 
   if (typeof window !== "undefined") {

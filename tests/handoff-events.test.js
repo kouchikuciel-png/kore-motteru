@@ -5,6 +5,7 @@ const {
   formatHandoffDateTime,
   pendingEventsForBarcode,
   describePendingEvent,
+  mergeGuestProductState,
 } = require("../handoff-events.js");
 
 const NOW = new Date("2026-09-27T06:00:00Z");
@@ -58,4 +59,33 @@ test("警告文は既存イベントの日時と数量を示す", () => {
     describePendingEvent({ id: 2, quantity: 2, created_at: null }, NOW).text,
     "「渡した」の記録があります。数量：2冊"
   );
+});
+
+test("重複確認に本人の受け取り待ちを重ね、在庫・購入予定が0でも重複として扱う", () => {
+  const state = { valid_token: true, owned_quantity: 0, planned_quantity: 0, duplicate: false };
+  const mine = [
+    { id: 7, barcode: "9784834000825", quantity: 2, created_at: "2026-09-27T04:35:00Z", status: "PENDING" },
+    { id: 5, barcode: "9784834000825", quantity: 1, created_at: "2026-09-27T04:20:00Z", status: "PENDING" },
+    { id: 6, barcode: "9784033030203", quantity: 1, created_at: "2026-09-27T04:25:00Z", status: "PENDING" },
+  ];
+
+  const merged = mergeGuestProductState(state, mine, "9784834000825");
+  assert.equal(merged.duplicate, true);
+  assert.equal(merged.owned_quantity, 0);
+  assert.equal(merged.planned_quantity, 0);
+  assert.deepEqual(
+    merged.my_pending_handoffs.map((event) => [event.id, event.quantity, event.created_at]),
+    [[5, 1, "2026-09-27T04:20:00Z"], [7, 2, "2026-09-27T04:35:00Z"]],
+    "イベントごとに古い順。数量は合算しない"
+  );
+});
+
+test("本人の受け取り待ちが無ければ、従来どおり在庫・購入予定だけで判定する", () => {
+  assert.equal(
+    mergeGuestProductState({ owned_quantity: 0, planned_quantity: 0, duplicate: false }, [], "9784834000825").duplicate,
+    false
+  );
+  const owned = mergeGuestProductState({ owned_quantity: 1, planned_quantity: 0, duplicate: true }, null, "9784834000825");
+  assert.equal(owned.duplicate, true);
+  assert.deepEqual(owned.my_pending_handoffs, []);
 });

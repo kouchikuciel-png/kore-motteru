@@ -74,6 +74,10 @@
       text-align: center;
     }
     .status strong { display: block; font-size: 22px; margin-bottom: 8px; }
+    .my-pending-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+    .my-pending-list li { padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.65); }
+    .my-pending-when { font-weight: 800; line-height: 1.45; }
+    .my-pending-quantity { margin-top: 2px; font-size: 15px; }
     .barcode {
       margin-top: 8px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -215,6 +219,7 @@
       .owned-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
     @media (prefers-color-scheme: dark) {
+      .my-pending-list li { background: rgba(0,0,0,.25); }
       body { background: #0f0f0f; color: #fff; }
       .card, .owned-item, .detail-sheet { background: #181818; }
       .sub, .note, .barcode, .qty-label, .owned-count, .owned-author, .owned-meta, .detail-author, .detail-meta, .manual-entry summary, .manual-entry-note { color: #aaa; }
@@ -314,7 +319,7 @@
   </div>
 
   <script src="./book-metadata-adapter.js"></script>
-  <script src="./app.js?v=20260922-guestqr1"></script>
+  <script src="./app.js?v=20260927-handoff-events"></script>
   <script src="./handoff-events.js?v=20260927-handoff-events"></script>
   <script src="./handoff-ui.js?v=20260927-handoff-events"></script>
   <script src="./guest-readable-handoffs.js?v=20260927-1"></script>

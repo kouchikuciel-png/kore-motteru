@@ -184,6 +184,58 @@ test("オーナー側の取消でも取消日時を記録し、他イベント�
   assert.deepEqual(myPending().items.map((item) => item.id), pendingBefore.filter((id) => id !== a.handoff_id));
 });
 
+test("ゲストの重複確認は本人の受け取り待ちを含め、イベントごとの日時・数量を返す", { skip }, () => {
+  const ISBN_C = "9784772100182";
+  const other = rpc("create_owner_guest_invite", OWNER_TOKEN, "ばあば");
+
+  const before = rpc("get_guest_product_state", guest.guest_token, ISBN_C, guest.guest_key);
+  assert.equal(before.duplicate, false);
+  assert.deepEqual(before.my_pending_handoffs, []);
+
+  const first = handoff(ISBN_C, 1);
+  const second = handoff(ISBN_C, 2);
+
+  const mine = rpc("get_guest_product_state", guest.guest_token, ISBN_C, guest.guest_key);
+  assert.equal(mine.valid_token, true);
+  assert.equal(mine.owned_quantity, 0);
+  assert.equal(mine.planned_quantity, 0);
+  assert.equal(mine.duplicate, true, "在庫・購入予定が0でも、本人の受け取り待ちがあれば重複");
+  assert.deepEqual(mine.my_pending_handoffs.map((event) => [event.id, event.quantity, event.status]),
+    [[first.handoff_id, 1, "PENDING"], [second.handoff_id, 2, "PENDING"]], "古い順・イベントごと・合算しない");
+  assert.deepEqual(
+    mine.my_pending_handoffs.map((event) => Date.parse(event.created_at)),
+    [first.handoff_id, second.handoff_id].map((id) => Date.parse(eventRow(id).created_at)),
+    "各イベントの「渡した」日時をそのまま返す"
+  );
+  assert.equal("my_pending_quantity" in mine, false, "受け取り待ちの合計数量は返さない");
+
+  // 他のゲストには、件数も存在も示さない。
+  const theirs = rpc("get_guest_product_state", other.guest_token, ISBN_C, other.guest_key);
+  assert.equal(theirs.duplicate, false);
+  assert.deepEqual(theirs.my_pending_handoffs, []);
+  assert.equal(theirs.owned_quantity, 0);
+  assert.equal(theirs.planned_quantity, 0);
+  assert.deepEqual(Object.keys(theirs).sort(), ["duplicate", "my_pending_handoffs", "owned_quantity", "planned_quantity", "valid_token"]);
+
+  // 本人識別子が無い・違う場合も漏らさない。既存RPCの結果も変えない。
+  assert.deepEqual(rpc("get_guest_product_state", guest.guest_token, ISBN_C, null).my_pending_handoffs, []);
+  assert.deepEqual(rpc("get_guest_product_state", guest.guest_token, ISBN_C, "someone-else").my_pending_handoffs, []);
+  assert.equal(rpc("get_household_product_state", guest.guest_token, ISBN_C).duplicate, false);
+  assert.equal(rpc("get_guest_product_state", "invalid-token", ISBN_C, guest.guest_key).valid_token, false);
+
+  // 1件取り消すと残りだけ、受け取ると在庫側の重複へ移る。
+  rpc("cancel_my_handoff_request", guest.guest_token, first.handoff_id, guest.guest_key);
+  assert.deepEqual(rpc("get_guest_product_state", guest.guest_token, ISBN_C, guest.guest_key)
+    .my_pending_handoffs.map((event) => event.id), [second.handoff_id]);
+  rpc("accept_handoff_request", OWNER_TOKEN, second.handoff_id);
+  const received = rpc("get_guest_product_state", guest.guest_token, ISBN_C, guest.guest_key);
+  assert.deepEqual(received.my_pending_handoffs, []);
+  assert.equal(received.owned_quantity, 2);
+  assert.equal(received.duplicate, true);
+  assert.equal(rpc("get_guest_product_state", other.guest_token, ISBN_C, other.guest_key).owned_quantity, 2,
+    "受取後の在庫は全ゲストに見える（既存仕様）");
+});
+
 test("018 適用前の既存データは壊さず、取消日時を捏造しない", { skip }, () => {
   const legacy = rows(`select quantity, status, created_at, received_at, cancelled_at
                        from public.handoff_requests

@@ -109,11 +109,40 @@ async function callRpc(name, body) {
   return await response.json();
 }
 
-function getProductState(token, barcode) {
-  return callRpc("get_household_product_state", {
-    p_token: token,
-    p_barcode: barcode,
-  });
+async function getGuestBuyerKeyForCheck() {
+  // 専用QRの本人識別子が確定してから照合する（端末側の識別子で「受け取り待ちなし」と誤判定しない）。
+  const ready = window.KoreMotteruGuestIdentity?.ready;
+  if (ready) {
+    await Promise.race([ready, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  }
+  return getOrCreateBuyerKey();
+}
+
+// 重複確認の対象: 家の在庫・購入予定・このゲスト本人の受け取り待ち。
+// 他のゲストの受け取り待ちは返さない（贈り物を漏らさない）。
+async function getProductState(token, barcode) {
+  const buyerKey = await getGuestBuyerKeyForCheck();
+  try {
+    return await callRpc("get_guest_product_state", {
+      p_token: token,
+      p_barcode: barcode,
+      p_buyer_key: buyerKey,
+    });
+  } catch (error) {
+    // 018 未適用のDBでは関数が無い（404）。既存RPCの組み合わせで同じ判定をする。
+    if (!/^Supabase 404\b/.test(String(error?.message || ""))) throw error;
+  }
+
+  const [state, mine] = await Promise.all([
+    callRpc("get_household_product_state", { p_token: token, p_barcode: barcode }),
+    callRpc("get_my_pending_handoffs", { p_token: token, p_buyer_key: buyerKey }).catch((error) => {
+      console.warn("pending handoff check unavailable", error);
+      return null;
+    }),
+  ]);
+  const merge = window.KoreMotteruHandoffEvents?.mergeGuestProductState;
+  if (!state || state.valid_token !== true || !merge) return state;
+  return merge(state, mine?.valid_token === true ? mine.items : [], barcode);
 }
 
 function getGuestLabel() {
@@ -572,6 +601,34 @@ function showScanView() {
   setStatus("準備OK", "ボタンを押してカメラを起動してください。");
 }
 
+// 本人が「渡した」まま、まだ受け取られていない同じ本。拒否はせず、イベントごとの日時・数量を示す。
+function setMyPendingHandoffStatus(barcode, events, state) {
+  const format = window.KoreMotteruHandoffEvents?.formatHandoffDateTime;
+  const alsoOwned = Number(state.owned_quantity || 0) + Number(state.planned_quantity || 0) > 0;
+
+  statusBox.className = "status warn";
+  statusBox.innerHTML = `
+    <strong>受け取り待ちがあります</strong>
+    <span>あなたが「渡した」本が、まだ受け取られていません。${alsoOwned ? "家にある分・購入予定もあります。" : ""}追加で買った・渡した場合は、そのまま続けられます。</span>
+    <ul class="my-pending-list"></ul>
+    <div class="barcode">${escapeHtml(barcode)}</div>
+  `;
+
+  const list = statusBox.querySelector(".my-pending-list");
+  for (const event of events) {
+    const when = typeof format === "function" ? format(event.created_at) : "";
+    const item = document.createElement("li");
+    const whenLine = document.createElement("div");
+    whenLine.className = "my-pending-when";
+    whenLine.textContent = when ? `${when}に「渡した」と記録されています` : "「渡した」の記録があります";
+    const quantityLine = document.createElement("div");
+    quantityLine.className = "my-pending-quantity";
+    quantityLine.textContent = `数量：${Math.max(1, Number(event.quantity || 1))}冊`;
+    item.append(whenLine, quantityLine);
+    list.appendChild(item);
+  }
+}
+
 function renderProductState(barcode, state) {
   currentBarcode = barcode;
   currentState = state;
@@ -581,8 +638,12 @@ function renderProductState(barcode, state) {
   plannedQty.textContent = String(state.planned_quantity ?? 0);
 
   const duplicate = Boolean(state.duplicate);
+  const myPending = Array.isArray(state.my_pending_handoffs) ? state.my_pending_handoffs : [];
 
-  if (duplicate) {
+  if (myPending.length > 0) {
+    setMyPendingHandoffStatus(barcode, myPending, state);
+    purchaseBtn.textContent = "それでも購入予定に入れる";
+  } else if (duplicate) {
     setBarcodeStatus(
       "重複しています",
       "すでに所有、または購入予定があります。それでも購入できます。",

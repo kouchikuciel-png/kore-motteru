@@ -12,9 +12,16 @@
 -- 2. 取消RPC（016 の定義を踏襲）で cancelled_at を記録する
 -- 3. ゲスト本人の受け取り待ち一覧に status / purchaser_label を返し、
 --    送り主キーでの参照用インデックスを追加する
+-- 4. ゲストの重複確認 get_guest_product_state を追加する。
+--    対象は「家の在庫」「購入予定」「そのゲスト本人の受け取り待ち」。
+--    他のゲストの受け取り待ちは、件数も存在も返さない（贈り物を漏らさない）。
+--    受け取り待ちはイベントごと（日時・その時の数量）に返し、合算しない。
+--    既存の get_household_product_state は変更しない。
 --
 -- 互換性: 列・戻り値フィールドの追加のみ。既存RPCの引数・既存フィールドは不変。
--- ロールバック: 016 の2関数と 015 の get_my_pending_handoffs を再適用すれば元の挙動に戻る。
+-- ロールバック: 016 の2関数と 015 の get_my_pending_handoffs を再適用し、
+--   get_guest_product_state を drop すれば元の挙動に戻る
+--   （画面は get_guest_product_state が無い場合、既存RPCの組み合わせで動く）。
 --   cancelled_at 列とインデックスは残しても既存コードに影響しない。
 -- =========================================
 
@@ -305,3 +312,88 @@ $$;
 
 revoke all on function public.get_my_pending_handoffs(text, text) from public;
 grant execute on function public.get_my_pending_handoffs(text, text) to anon, authenticated;
+
+-- ゲストの「これ持ってる？」: 家の在庫・購入予定に加え、そのゲスト本人の受け取り待ちも重複として扱う。
+-- p_buyer_key は get_my_pending_handoffs / cancel_my_handoff_request と同じ本人識別子。
+create or replace function public.get_guest_product_state(
+  p_token text,
+  p_barcode text,
+  p_buyer_key text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_household_id uuid;
+  v_owned_quantity integer := 0;
+  v_planned_quantity integer := 0;
+  v_my_pending jsonb := '[]'::jsonb;
+begin
+  select st.household_id
+    into v_household_id
+  from public.share_tokens st
+  where st.token_hash = encode(extensions.digest(p_token, 'sha256'), 'hex')
+    and st.permission in ('CHECK', 'SHOP')
+    and st.revoked_at is null
+  limit 1;
+
+  if v_household_id is null then
+    return jsonb_build_object(
+      'valid_token', false,
+      'owned_quantity', 0,
+      'planned_quantity', 0,
+      'my_pending_handoffs', '[]'::jsonb,
+      'duplicate', false
+    );
+  end if;
+
+  select coalesce(sum(hi.quantity), 0)::integer
+    into v_owned_quantity
+  from public.household_items hi
+  where hi.household_id = v_household_id
+    and hi.barcode = p_barcode;
+
+  select coalesce(sum(pp.quantity), 0)::integer
+    into v_planned_quantity
+  from public.purchase_plans pp
+  where pp.household_id = v_household_id
+    and pp.barcode = p_barcode
+    and pp.status = 'PLANNED';
+
+  if nullif(trim(coalesce(p_buyer_key, '')), '') is not null then
+    select coalesce(
+      jsonb_agg(
+        jsonb_build_object(
+          'id', hr.id,
+          'barcode', hr.barcode,
+          'quantity', hr.quantity,
+          'status', hr.status,
+          'created_at', hr.created_at
+        )
+        order by hr.created_at, hr.id
+      ),
+      '[]'::jsonb
+    )
+    into v_my_pending
+    from public.handoff_requests hr
+    where hr.household_id = v_household_id
+      and hr.barcode = p_barcode
+      and hr.sender_key = p_buyer_key
+      and hr.status = 'PENDING';
+  end if;
+
+  return jsonb_build_object(
+    'valid_token', true,
+    'owned_quantity', v_owned_quantity,
+    'planned_quantity', v_planned_quantity,
+    'my_pending_handoffs', v_my_pending,
+    'duplicate', (v_owned_quantity + v_planned_quantity) > 0
+      or jsonb_array_length(v_my_pending) > 0
+  );
+end;
+$$;
+
+revoke all on function public.get_guest_product_state(text, text, text) from public;
+grant execute on function public.get_guest_product_state(text, text, text) to anon, authenticated;

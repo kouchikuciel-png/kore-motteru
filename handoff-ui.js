@@ -36,6 +36,10 @@
     key: "",
   };
 
+  // 呼び名（本人識別子）の確認が終わったら解決する。重複確認はこれを待ってから本人の受け取り待ちを照合する。
+  let markIdentityReady = () => {};
+  const identityReady = new Promise((resolve) => { markIdentityReady = resolve; });
+
   function getGuestLabel() {
     if (isOwner) return "";
     // 専用QRかどうかの確認が終わるまでは、端末保存の呼び名や識別子で記録しない。
@@ -214,6 +218,7 @@
     window.KoreMotteruGuestIdentity = {
       getLabel: getGuestLabel,
       getKey: getGuestKey,
+      ready: identityReady,
       requestLabel() {
         if (getGuestLabel()) return true;
         saved.textContent = managedGuestIdentity.resolved
@@ -230,9 +235,11 @@
       if (!token) {
         managedGuestIdentity.resolved = true;
         saved.textContent = "共有リンクを開いてください。";
+        markIdentityReady();
         return;
       }
       await resolveIdentity(token);
+      markIdentityReady();
       document.dispatchEvent(new CustomEvent("kore-motteru:guest-identity-resolved"));
     })();
 
