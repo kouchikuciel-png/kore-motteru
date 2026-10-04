@@ -320,6 +320,9 @@ function showReadyToRepeat() {
 }
 
 function isTutorialDismissed() {
+  // 初回案内（onboarding.js）を最後まで見た・閉じた端末も、自動表示しない。
+  const onboarding = window.KoreMotteruOnboarding;
+  if (onboarding) return onboarding.ownerOnboardingDone(onboarding.localStorageOrNull());
   try {
     return localStorage.getItem(TUTORIAL_STORAGE_KEY) === "1";
   } catch (_) {
@@ -977,8 +980,14 @@ window.addEventListener("pagehide", async () => {
 updateQuantityControls();
 resetBookPreview();
 
-if (!isTutorialDismissed()) {
-  setTimeout(() => {
-    openTutorial();
-  }, 0);
+// 後続のスクリプト（owner-cover-proxy.js が新しい案内へ差し替える）を読み終えてから開く。
+// setTimeout(0) だと読み込み途中に発火し、古い静的な案内が開くことがあった。
+function openTutorialIfFirstVisit() {
+  if (!isTutorialDismissed()) window.openTutorial();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", openTutorialIfFirstVisit, { once: true });
+} else {
+  setTimeout(openTutorialIfFirstVisit, 0);
 }

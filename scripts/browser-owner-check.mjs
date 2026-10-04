@@ -13,12 +13,14 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
+const { guestStorageKey } = require("../onboarding.js");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || "";
 const OWNER_TOKEN = "local_owner";
 const GUEST_TOKEN = "kmtg_local_guest";
+const ONBOARDING_SEEN_KEYS = [GUEST_TOKEN].map(guestStorageKey);
 const ISBN_A = "9784834000825";
 const ISBN_B = "9784033030203";
 const ISBN_BASHO = "9784044001070"; // 実機で表紙が出なかった例（芭蕉全句集）
@@ -135,6 +137,10 @@ window.Tesseract = {
 const coverRequests = [];
 async function preparePage(context, { metadataDelay = 0 } = {}) {
   const page = await context.newPage();
+  // 初回案内（Issue #42）は scripts/browser-onboarding-check.mjs で確認する。ここでは表示済みの端末として開く。
+  await page.addInitScript((keys) => {
+    for (const key of keys) localStorage.setItem(key, "1");
+  }, ONBOARDING_SEEN_KEYS);
   page.on("pageerror", (error) => { throw error; });
   await page.route(/unpkg\.com/, (route) => route.fulfill({ contentType: "text/javascript", body: FAKE_HTML5_QRCODE }));
   await page.route(/jsdelivr\.net/, (route) => route.fulfill({ contentType: "text/javascript", body: FAKE_TESSERACT }));

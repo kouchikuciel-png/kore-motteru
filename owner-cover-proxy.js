@@ -182,7 +182,7 @@
   window.__ownerTutorialV2Pending = false;
   window.openTutorial = () => { window.__ownerTutorialV2Pending = true; };
   const script = document.createElement("script");
-  script.src = "./owner-tutorial-v2.js";
+  script.src = "./owner-tutorial-v2.js?v=20261005-onboarding";
   script.dataset.ownerTutorialV2 = "1"; document.head.appendChild(script);
 })();
 
