@@ -87,8 +87,27 @@
     };
   }
 
+  // 受け取り待ちイベントの一覧を、イベント（id）ごとに1件ずつ、届いた順のまま返す。
+  // 同じISBN・同じ数量でも別イベントなら別々に残す（ISBN単位にまとめない）。
+  // 同じイベントが重複して届いた場合だけ1件にする。
+  function uniquePendingEvents(events) {
+    const seen = new Set();
+    const result = [];
+    for (const event of Array.isArray(events) ? events : []) {
+      if (event?.status && event.status !== "PENDING") continue;
+      const key = event?.id ?? null;
+      if (key !== null) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      result.push(event);
+    }
+    return result;
+  }
+
   const api = {
     TIME_ZONE,
+    uniquePendingEvents,
     formatHandoffDateTime,
     pendingEventsForBarcode,
     describePendingEvent,

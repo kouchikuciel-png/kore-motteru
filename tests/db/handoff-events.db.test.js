@@ -421,6 +421,26 @@ test("専用QRでは識別子を送らなくても、サーバー導出の本人
   assert.equal(eventRow(event.id).status, "CANCELLED");
 });
 
+test("Issue #40: オーナーの受け取り待ちは同じISBNでもイベントごとに返り、受取・取消で1件ずつ減る", { skip }, () => {
+  const ISBN_E = "9784044001070";
+  const countFor = (barcode) => rpc("get_pending_handoffs", OWNER_TOKEN).items.filter((item) => item.barcode === barcode);
+  const before = rpc("get_pending_handoffs", OWNER_TOKEN).items.length;
+
+  const first = handoff(ISBN_E, 1);
+  const second = handoff(ISBN_E, 1);
+  const third = handoff(ISBN_D, 2);
+  assert.deepEqual(countFor(ISBN_E).map((item) => item.id), [first.handoff_id, second.handoff_id], "同じISBNでも2件");
+  assert.equal(rpc("get_pending_handoffs", OWNER_TOKEN).items.length, before + 3, "異なるISBN混在でもイベント総数");
+
+  rpc("accept_handoff_request", OWNER_TOKEN, first.handoff_id);
+  assert.deepEqual(countFor(ISBN_E).map((item) => item.id), [second.handoff_id]);
+  assert.equal(rpc("get_pending_handoffs", OWNER_TOKEN).items.length, before + 2, "受取で1件だけ減る");
+
+  rpc("cancel_owner_handoff_request", OWNER_TOKEN, third.handoff_id);
+  assert.equal(rpc("get_pending_handoffs", OWNER_TOKEN).items.length, before + 1, "取消で1件だけ減る");
+  rpc("cancel_owner_handoff_request", OWNER_TOKEN, second.handoff_id);
+});
+
 test("018 適用前の既存データは壊さず、取消日時を捏造しない", { skip }, () => {
   const legacy = rows(`select quantity, status, created_at, received_at, cancelled_at
                        from public.handoff_requests

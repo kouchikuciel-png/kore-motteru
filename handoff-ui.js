@@ -290,6 +290,17 @@
     return window.KoreMotteruHandoffEvents || null;
   }
 
+  const COVER_PROXY_BASE = SUPABASE_RPC_BASE ? `${SUPABASE_RPC_BASE}/functions/v1/book-cover-proxy` : "";
+
+  // オーナー本登録・ゲスト本棚と同じ表紙候補チェーン（cover-chain.js）で表紙を入れる。
+  // coverUrls → coverUrl → 各中継候補の順に試し、全部失敗した時だけ📚。
+  function showCoverChain(container, metadata, alt) {
+    const chain = window.KoreMotteruCoverChain;
+    if (!chain) return Promise.resolve({ status: "empty" });
+    const urls = chain.expandCoverCandidates(metadata, COVER_PROXY_BASE);
+    return chain.loadCoverChain(container, urls, { alt });
+  }
+
   function formatWhen(value) {
     return handoffEvents()?.formatHandoffDateTime?.(value) || "";
   }
@@ -609,31 +620,18 @@
       }
     }
 
-    function coverCandidates(metadata, barcode) {
-      const raw = [
-        ...(Array.isArray(metadata?.coverUrls) ? metadata.coverUrls : []),
-        metadata?.coverUrl || "",
-        ...(typeof guestHanmotoCoverCandidates === "function" && metadata?.title
-          ? guestHanmotoCoverCandidates(barcode)
-          : []),
-      ];
-      if (typeof expandGuestCoverCandidates === "function") return expandGuestCoverCandidates(raw);
-      return [...new Set(raw.map((url) => String(url || "").trim()).filter(Boolean))];
-    }
-
-    // 候補を順に試し、全部失敗したら📚のまま（本棚と同じフォールバック）。
+    // 本棚と同じく、書名が分かった本だけ版元ドットコム候補を最後に足す。
     function showCover(cover, metadata, barcode) {
-      const urls = coverCandidates(metadata, barcode);
-      if (!urls.length) return;
-      const img = document.createElement("img");
-      img.alt = metadata?.title ? `${metadata.title}の表紙` : "本の表紙";
-      let index = 0;
-      img.onload = () => cover.replaceChildren(img);
-      img.onerror = () => {
-        index += 1;
-        if (index < urls.length) img.src = urls[index];
+      const withHanmoto = {
+        coverUrls: [
+          ...(Array.isArray(metadata?.coverUrls) ? metadata.coverUrls : []),
+          metadata?.coverUrl || "",
+          ...(typeof guestHanmotoCoverCandidates === "function" && metadata?.title
+            ? guestHanmotoCoverCandidates(barcode)
+            : []),
+        ],
       };
-      img.src = urls[index];
+      showCoverChain(cover, withHanmoto, metadata?.title ? `${metadata.title}の表紙` : "本の表紙");
     }
 
     // 1件の受け取り待ちイベントを1枚のカードにする。同じISBNでもまとめない。
@@ -1057,17 +1055,9 @@
 
       const cover = document.createElement("div");
       cover.className = "handoff-cover";
-      if (metadata.coverUrl) {
-        const img = document.createElement("img");
-        img.src = metadata.coverUrl;
-        img.alt = "";
-        img.onerror = () => {
-          cover.innerHTML = '<span aria-hidden="true">📚</span>';
-        };
-        cover.appendChild(img);
-      } else {
-        cover.innerHTML = '<span aria-hidden="true">📚</span>';
-      }
+      cover.innerHTML = '<span aria-hidden="true">📚</span>';
+      // 1候補の失敗で📚にしない。本登録と同じ候補チェーンで、全滅した時だけ📚のまま。
+      showCoverChain(cover, metadata, metadata.title ? `${metadata.title}の表紙` : "本の表紙");
 
       const body = document.createElement("div");
       const name = document.createElement("div");
@@ -1145,7 +1135,14 @@
       return article;
     }
 
+    // 受け取り待ち件数 = PENDING の受け渡しイベント件数（カード枚数）。ISBN単位にはまとめない。
+    // 読み込みは「受け取った」後のタイマー・更新イベント・画面復帰で重なって呼ばれるため、
+    // 最後に始めた読み込みだけが一覧を描き、件数とカードを同じ一覧から一度に差し替える。
+    let pendingLoadSequence = 0;
+
     async function loadPending() {
+      const sequence = ++pendingLoadSequence;
+      const isLatest = () => sequence === pendingLoadSequence;
       const token = tokenFromHash();
       if (!token) {
         count.textContent = "!";
@@ -1156,6 +1153,7 @@
 
       try {
         const result = await rpc("get_pending_handoffs", { p_token: token });
+        if (!isLatest()) return;
         if (!result || result.valid_token !== true) {
           count.textContent = "!";
           empty.textContent = "家主リンクを確認してください。";
@@ -1163,23 +1161,27 @@
           return;
         }
 
-        const items = Array.isArray(result.items) ? result.items : [];
-        count.textContent = String(items.length);
-        list.innerHTML = "";
+        const items = handoffEvents()?.uniquePendingEvents?.(result.items) ??
+          (Array.isArray(result.items) ? result.items : []);
 
         if (items.length === 0) {
+          list.replaceChildren();
+          count.textContent = "0";
           empty.textContent = "いま受け取り待ちはありません。";
           empty.classList.remove("hidden");
           list.classList.add("hidden");
           return;
         }
 
+        const nodes = await Promise.all(items.map(renderItem));
+        if (!isLatest()) return;
+        list.replaceChildren(...nodes);
+        count.textContent = String(nodes.length);
         empty.classList.add("hidden");
         list.classList.remove("hidden");
-        const nodes = await Promise.all(items.map(renderItem));
-        nodes.forEach((node) => list.appendChild(node));
       } catch (error) {
         console.error(error);
+        if (!isLatest()) return;
         count.textContent = "!";
         empty.textContent = "受け取り待ちを読み込めませんでした。";
         empty.classList.remove("hidden");

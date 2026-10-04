@@ -85,30 +85,21 @@
     return true;
   }
 
+  // 192… など本の番号ではないバーコードが続いた時、近くの印字ISBNを裏で探す。
+  // カメラは止めない（busy も立てない）。探している間に 978/979 のバーコードが読めれば、
+  // そちらが通常どおり採用され、この OCR の結果は捨てる。
   async function runQuickUpperOcr() {
-    if (quickOcrRunning || busy || !scannerStarted) return;
+    if (quickOcrRunning || busy || !scannerStarted || pendingCode) return;
     if (Date.now() < quickOcrCooldownUntil) return;
 
     quickOcrRunning = true;
     quickOcrCooldownUntil = Date.now() + QUICK_OCR_COOLDOWN_MS;
     resetInvalidStreak();
-    busy = true;
-    clearAutoOcrTimer();
-
-    if (!captureUpperBookArea()) {
-      busy = false;
-      quickOcrRunning = false;
-      return;
-    }
-
-    await stopScannerQuietly();
-    hideCameraControls();
-    setStatus(
-      "本の番号を探しています…",
-      "別のバーコードを読み取ったため、近くにある本の番号も確認しています。"
-    );
+    let claimedBusy = false;
 
     try {
+      if (!captureUpperBookArea()) return;
+
       const worker = await getOcrWorker();
       await worker.setParameters({
         tessedit_char_whitelist: "ISBNisbnXx0123456789- ",
@@ -124,27 +115,24 @@
         tessedit_pageseg_mode: "6",
       });
 
-      if (isbn) {
-        await submitCode(isbn, "本の番号");
-        return;
-      }
+      // その間にバーコードで確定した・カメラが止められた場合は何もしない。
+      if (!isbn || busy || !scannerStarted || pendingCode) return;
 
-      busy = false;
-      await startScanner(false);
-      setStatus(
-        "読み取り中",
-        "本のうらをそのまま映してください。もう1つのバーコードや数字を探します。"
-      );
+      busy = true;
+      claimedBusy = true;
+      clearAutoOcrTimer();
+      await stopScannerQuietly();
+      hideCameraControls();
+      await submitCode(isbn, "本の番号");
     } catch (error) {
       console.warn("quick upper OCR failed", error);
-      busy = false;
-      try {
-        await startScanner(false);
-      } catch (_) {}
     } finally {
-      busy = false;
       quickOcrRunning = false;
-      updateQuantityControls();
+      // 自分が確定処理に入った時だけ戻す（並行して読めたバーコードの処理は邪魔しない）。
+      if (claimedBusy) {
+        busy = false;
+        updateQuantityControls();
+      }
     }
   }
 

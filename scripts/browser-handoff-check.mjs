@@ -410,12 +410,72 @@ try {
   db.withoutGuestProductState = false;
   log("018 未適用のDBでもフォールバックで同じ判定（他ゲストへの非表示も同じ）");
 
+  // 8a. オーナー「受け取り待ち」の表紙は本登録と同じ候補チェーン。
+  //     直接の候補がすべて失敗しても📚にせず、中継候補まで順に試す。
+  const coverRequests = [];
+  async function routeOwnerCovers(page, { proxyServesIsbnCover }) {
+    const log = (url) => coverRequests.push(url);
+    await page.route(/covers\.openlibrary\.org|img\.hanmoto\.com/, (route) => {
+      log(route.request().url());
+      route.fulfill({ status: 404, body: "" });
+    });
+    await page.route(/book-cover-proxy/, (route) => {
+      const url = route.request().url();
+      log(url);
+      const src = new URL(url).searchParams.get("src") || "";
+      if (proxyServesIsbnCover && src.includes("/b/isbn/")) {
+        route.fulfill({ contentType: "image/png", body: PNG });
+      } else {
+        route.fulfill({ status: 502, body: "Upstream 404" });
+      }
+    });
+  }
+  async function openOwner(options) {
+    const context = await browser.newContext({ locale: "ja-JP" });
+    await context.addInitScript(() => localStorage.setItem("kore-motteru-owner-tutorial-dismissed-v1", "1"));
+    const page = await preparePage(context);
+    await routeOwnerCovers(page, options);
+    await page.goto(`${BASE}/owner.html#token=${OWNER_TOKEN}`);
+    await page.waitForSelector("#handoffList .handoff-item");
+    return page;
+  }
+
+  const owner = await openOwner({ proxyServesIsbnCover: true });
+  await owner.waitForFunction(() =>
+    [...document.querySelectorAll("#handoffList .handoff-cover")].every((cover) => cover.querySelector("img")));
+  const inboxCovers = await owner.$$eval("#handoffList .handoff-cover img", (images) =>
+    images.map((image) => ({ src: image.src, alt: image.alt, width: image.naturalWidth })));
+  assert.equal(inboxCovers.length, 2);
+  for (const cover of inboxCovers) {
+    const src = new URL(cover.src).searchParams.get("src") || "";
+    assert.match(cover.src, /book-cover-proxy/, "中継候補で表示");
+    assert.match(src, /\/b\/isbn\/9784834000825/);
+    assert.equal(cover.alt, "ぐりとぐらの表紙");
+  }
+  const decoded = coverRequests.map((url) => decodeURIComponent(url));
+  const firstDirect = decoded.findIndex((url) => url.includes("covers.openlibrary.org/b/id/1-M.jpg") && !url.includes("book-cover-proxy"));
+  const firstProxyOfDirect = decoded.findIndex((url) => url.includes("book-cover-proxy") && url.includes("/b/id/1-M.jpg"));
+  const winning = decoded.findIndex((url) => url.includes("book-cover-proxy") && url.includes("/b/isbn/"));
+  assert.ok(firstDirect >= 0 && firstProxyOfDirect > firstDirect && winning > firstProxyOfDirect,
+    "coverUrls の直接候補 → その中継 → 次の候補…の順に試している");
+  await shot(owner, "03-owner-inbox");
+  log("オーナー受け取り待ちの表紙: 直接の候補が失敗しても📚にせず、中継候補まで順に試して表示");
+
+  // 8b. 全候補が失敗した時だけ📚
+  coverRequests.length = 0;
+  const ownerNoCover = await openOwner({ proxyServesIsbnCover: false });
+  await ownerNoCover.waitForFunction(() => {
+    const covers = [...document.querySelectorAll("#handoffList .handoff-cover")];
+    return covers.length === 2 && covers.every((cover) => !cover.querySelector("img") && cover.textContent.includes("📚"));
+  });
+  await ownerNoCover.waitForTimeout(300);
+  const triedForFirst = new Set(coverRequests.map((url) => decodeURIComponent(url)).filter((url) => url.includes("9784834000825") || url.includes("/b/id/1-M")));
+  assert.ok(triedForFirst.size >= 6, `直接・中継の全候補を試してから📚（試した候補 ${triedForFirst.size} 件）`);
+  assert.equal(await ownerNoCover.$$eval("#handoffList .handoff-cover img", (images) => images.length), 0);
+  await ownerNoCover.context().close();
+  log("オーナー受け取り待ちの表紙: 全候補（直接・中継）が失敗した時だけ📚");
+
   // 8. オーナーが1イベントを受け取っても、他は受け取り待ちのまま
-  const ownerContext = await browser.newContext({ locale: "ja-JP" });
-  await ownerContext.addInitScript(() => localStorage.setItem("kore-motteru-owner-tutorial-dismissed-v1", "1"));
-  const owner = await preparePage(ownerContext);
-  await owner.goto(`${BASE}/owner.html#token=${OWNER_TOKEN}`);
-  await owner.waitForSelector("#handoffList .handoff-item");
   const whens = await owner.$$eval("#handoffList .handoff-when", (nodes) => nodes.map((node) => node.textContent));
   assert.deepEqual(whens, ["9月27日 13:20 に「渡した」", "9月27日 13:50 に「渡した」"]);
   await shot(owner, "03-owner-inbox");
