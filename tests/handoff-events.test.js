@@ -89,3 +89,37 @@ test("本人の受け取り待ちが無ければ、従来どおり在庫・購�
   assert.equal(owned.duplicate, true);
   assert.deepEqual(owned.my_pending_handoffs, []);
 });
+
+// ---- Issue #40: 受け取り待ち件数は PENDING イベント件数（ISBN単位にまとめない） ----
+const { uniquePendingEvents } = require("../handoff-events.js");
+
+test("受け取り待ち件数は同じISBNでもイベントごとに数える", () => {
+  const events = [
+    { id: 1, barcode: "9784834000825", quantity: 1, created_at: "2026-09-23T03:00:00Z" },
+    { id: 2, barcode: "9784834000825", quantity: 1, created_at: "2026-09-27T03:00:00Z" },
+  ];
+  assert.equal(uniquePendingEvents(events).length, 2);
+});
+
+test("異なるISBNが混在しても、イベント総数と件数が一致する（数量は足さない）", () => {
+  const events = [
+    { id: 1, barcode: "9784834000825", quantity: 1 },
+    { id: 2, barcode: "9784834000825", quantity: 3 },
+    { id: 3, barcode: "9784033030203", quantity: 2 },
+  ];
+  const unique = uniquePendingEvents(events);
+  assert.deepEqual(unique.map((event) => event.id), [1, 2, 3], "届いた順のまま1件ずつ");
+  assert.equal(unique.length, 3);
+});
+
+test("同じイベントが重複して届いた時だけ1件にし、受取・取消済みは数えない", () => {
+  const events = [
+    { id: 1, barcode: "9784834000825", quantity: 1 },
+    { id: 1, barcode: "9784834000825", quantity: 1 },
+    { id: 2, barcode: "9784834000825", quantity: 1, status: "RECEIVED" },
+    { id: 3, barcode: "9784834000825", quantity: 1, status: "CANCELLED" },
+    { id: 4, barcode: "9784834000825", quantity: 1, status: "PENDING" },
+  ];
+  assert.deepEqual(uniquePendingEvents(events).map((event) => event.id), [1, 4]);
+  assert.deepEqual(uniquePendingEvents(null), []);
+});

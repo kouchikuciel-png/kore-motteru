@@ -1135,7 +1135,14 @@
       return article;
     }
 
+    // 受け取り待ち件数 = PENDING の受け渡しイベント件数（カード枚数）。ISBN単位にはまとめない。
+    // 読み込みは「受け取った」後のタイマー・更新イベント・画面復帰で重なって呼ばれるため、
+    // 最後に始めた読み込みだけが一覧を描き、件数とカードを同じ一覧から一度に差し替える。
+    let pendingLoadSequence = 0;
+
     async function loadPending() {
+      const sequence = ++pendingLoadSequence;
+      const isLatest = () => sequence === pendingLoadSequence;
       const token = tokenFromHash();
       if (!token) {
         count.textContent = "!";
@@ -1146,6 +1153,7 @@
 
       try {
         const result = await rpc("get_pending_handoffs", { p_token: token });
+        if (!isLatest()) return;
         if (!result || result.valid_token !== true) {
           count.textContent = "!";
           empty.textContent = "家主リンクを確認してください。";
@@ -1153,23 +1161,27 @@
           return;
         }
 
-        const items = Array.isArray(result.items) ? result.items : [];
-        count.textContent = String(items.length);
-        list.innerHTML = "";
+        const items = handoffEvents()?.uniquePendingEvents?.(result.items) ??
+          (Array.isArray(result.items) ? result.items : []);
 
         if (items.length === 0) {
+          list.replaceChildren();
+          count.textContent = "0";
           empty.textContent = "いま受け取り待ちはありません。";
           empty.classList.remove("hidden");
           list.classList.add("hidden");
           return;
         }
 
+        const nodes = await Promise.all(items.map(renderItem));
+        if (!isLatest()) return;
+        list.replaceChildren(...nodes);
+        count.textContent = String(nodes.length);
         empty.classList.add("hidden");
         list.classList.remove("hidden");
-        const nodes = await Promise.all(items.map(renderItem));
-        nodes.forEach((node) => list.appendChild(node));
       } catch (error) {
         console.error(error);
+        if (!isLatest()) return;
         count.textContent = "!";
         empty.textContent = "受け取り待ちを読み込めませんでした。";
         empty.classList.remove("hidden");

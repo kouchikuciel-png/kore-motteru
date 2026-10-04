@@ -196,3 +196,15 @@
 - `node --test tests/*.test.js`（日時表示・警告対象の抽出）
 - `scripts/db-test.sh`（使い捨てPostgreSQLに 001〜018 を適用してRPCを検証。本番には接続しない）
 - `PLAYWRIGHT_MODULE=$(npm root -g)/playwright node scripts/browser-handoff-check.mjs`（模擬バックエンドで画面フローを検証）
+
+
+## 17. Issue #40（オーナー側3不具合）
+
+- [ ] 受け取り待ち件数 = PENDING の受け渡しイベント件数（カード枚数）。同じ本の2イベントなら「2」
+- [ ] 「受け取った」「取り消す」「画面に戻る」が重なっても、カードが二重に出たり消えたりせず、件数とカード枚数が一致する
+- [ ] オーナーのカメラで `192...` を何度読んでも登録候補にならず、カメラも止まらない（そのまま 978/979 を読める）
+- [ ] OCR で「ISBN」＋下段コードしか読めなくても、下段の数字から 978（ISBN-10 経由を含む）を作らない
+- [ ] 上段の 978/979、印字ISBN（ISBN-10 → 13 変換を含む）は従来どおり登録候補になる
+- [ ] オーナー受け取り待ちの表紙は、ゲスト本棚と同じ候補・中継の規則で表示され、全候補が失敗した時だけ📚
+
+自動確認: `PLAYWRIGHT_MODULE=$(npm root -g)/playwright node scripts/browser-owner-check.mjs`

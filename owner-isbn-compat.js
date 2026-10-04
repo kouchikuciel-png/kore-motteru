@@ -50,7 +50,10 @@
   }
 
   function findIsbn10(text) {
-    const raw = String(text || "");
+    // 191/192 の下段コードの数字から ISBN-10 を作らない（先に取り除く）。
+    const raw = window.KoreMotteruOcr?.maskBookPriceCodes
+      ? window.KoreMotteruOcr.maskBookPriceCodes(text)
+      : String(text || "");
     const matches = raw.match(/ISBN(?:-10)?\s*:?[\s]*[0-9Xx\-\s]{10,28}/gi) || [];
 
     for (const match of matches) {
