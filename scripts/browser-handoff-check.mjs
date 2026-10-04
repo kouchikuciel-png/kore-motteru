@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
+const { guestStorageKey } = require("../onboarding.js");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,6 +24,7 @@ const GUEST_KEY = "guest:local-jiji";
 const OTHER_GUEST_TOKEN = "kmtg_local_other";
 const OTHER_GUEST_KEY = "guest:local-baba";
 const LEGACY_SHOP_TOKEN = "legacy_shared_link";
+const ONBOARDING_SEEN_KEYS = [GUEST_TOKEN, OTHER_GUEST_TOKEN, LEGACY_SHOP_TOKEN].map(guestStorageKey);
 
 // ---- 模擬バックエンド（ページ再読込・別端末をまたいで状態を保持する） ----
 const db = {
@@ -157,6 +159,10 @@ const BASE = `http://localhost:${server.address().port}`;
 
 async function preparePage(context) {
   const page = await context.newPage();
+  // 初回案内（Issue #42）は scripts/browser-onboarding-check.mjs で確認する。ここでは表示済みの端末として開く。
+  await page.addInitScript((keys) => {
+    for (const key of keys) localStorage.setItem(key, "1");
+  }, ONBOARDING_SEEN_KEYS);
   page.on("pageerror", (error) => { throw error; });
   await page.route(/unpkg\.com|jsdelivr\.net|googleapis\.com|openbd\.jp|hanmoto\.com|book-cover-proxy/, (route) =>
     route.fulfill({ status: 404, body: "" }));
