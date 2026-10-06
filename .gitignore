@@ -1,0 +1,7 @@
+# Issue #44 PoC: 実ユーザーの本棚写真・解析結果は repo に入れない
+poc/shelf-photo/input/
+poc/shelf-photo/output/
+*.jpg
+*.jpeg
+*.heic
+__pycache__/
