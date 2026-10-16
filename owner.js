@@ -1030,11 +1030,17 @@ if (document.readyState === "loading") {
       const barcode = String(item.barcode || "");
       const row = document.createElement("div");
       row.className = "owner-inventory-item";
+      const cover = document.createElement("div");
+      cover.className = "owner-inventory-cover";
+      cover.innerHTML = '<span aria-hidden="true">📚</span>';
+      const info = document.createElement("div");
+      info.className = "owner-inventory-info";
       const name = document.createElement("span");
       name.textContent = "番号 " + barcode;
+      info.appendChild(name);
       const qty = document.createElement("strong");
       qty.textContent = "×" + Number(item.quantity || 0);
-      row.append(name, qty);
+      row.append(cover, info, qty);
       list.appendChild(row);
 
       if (!/^97[89]\d{10}$/.test(barcode)) continue;
@@ -1043,7 +1049,20 @@ if (document.readyState === "loading") {
           metadataCache.set(barcode, fetchBookMetadata(barcode).catch(() => null));
         }
         metadataCache.get(barcode).then((metadata) => {
-          if (row.isConnected && metadata?.title) name.textContent = metadata.title;
+          if (!row.isConnected || !metadata) return;
+          if (metadata.title) name.textContent = metadata.title;
+
+          const coverChain = window.KoreMotteruCoverChain;
+          if (!coverChain) return;
+          const candidates = coverChain.expandCoverCandidates(
+            metadata,
+            SUPABASE_URL + "/functions/v1/book-cover-proxy"
+          );
+          if (!candidates.length) return;
+          coverChain.loadCoverChain(cover, candidates, {
+            alt: (metadata.title || "本") + "の表紙",
+            isCurrent: () => row.isConnected,
+          });
         });
       };
       if (observer) observer.observe(row);
