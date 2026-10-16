@@ -631,6 +631,7 @@ async function confirmRegistration() {
 
     resetPendingRegistration();
     showReadyToRepeat();
+    document.dispatchEvent(new CustomEvent("kore-motteru:owned-items-updated"));
   } catch (error) {
     console.error(error);
     setStatus("登録できませんでした", "通信状態を確認して、もう一度お試しください。", "error", barcode);
@@ -991,3 +992,108 @@ if (document.readyState === "loading") {
 } else {
   setTimeout(openTutorialIfFirstVisit, 0);
 }
+
+
+// オーナーも登録済みの本棚を確認できる。登録機能や権限の意味は変更しない。
+(function installOwnerInventory() {
+  const box = document.getElementById("ownerInventory");
+  if (!box) return;
+  const list = box.querySelector("#ownerInventoryList");
+  const count = box.querySelector("#ownerInventoryCount");
+  const refresh = box.querySelector("#ownerInventoryRefresh");
+  const more = box.querySelector("#ownerInventoryMore");
+  const metadataCache = new Map();
+  let items = [];
+  let expanded = false;
+  let sequence = 0;
+  let observer = null;
+
+  function render() {
+    observer?.disconnect();
+    list.replaceChildren();
+    const shown = expanded ? items : items.slice(0, 6);
+    if (!items.length) list.textContent = "まだ本は登録されていません。";
+
+    if (typeof IntersectionObserver === "function") {
+      observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          observer.unobserve(entry.target);
+          entry.target.loadBookInfo?.();
+        }
+      }, { rootMargin: "120px" });
+    } else {
+      observer = null;
+    }
+
+    for (const item of shown) {
+      const barcode = String(item.barcode || "");
+      const row = document.createElement("div");
+      row.className = "owner-inventory-item";
+      const name = document.createElement("span");
+      name.textContent = "番号 " + barcode;
+      const qty = document.createElement("strong");
+      qty.textContent = "×" + Number(item.quantity || 0);
+      row.append(name, qty);
+      list.appendChild(row);
+
+      if (!/^97[89]\d{10}$/.test(barcode)) continue;
+      row.loadBookInfo = () => {
+        if (!metadataCache.has(barcode)) {
+          metadataCache.set(barcode, fetchBookMetadata(barcode).catch(() => null));
+        }
+        metadataCache.get(barcode).then((metadata) => {
+          if (row.isConnected && metadata?.title) name.textContent = metadata.title;
+        });
+      };
+      if (observer) observer.observe(row);
+      else row.loadBookInfo();
+    }
+
+    more.classList.toggle("hidden", items.length <= 6);
+    more.textContent = expanded
+      ? "最初の6種類だけ表示"
+      : "残り" + (items.length - 6) + "種類を見る";
+  }
+
+  async function load() {
+    const current = ++sequence;
+    const token = getShareToken();
+    refresh.disabled = true;
+    count.textContent = "本棚を読み込み中…";
+    if (!token) {
+      list.replaceChildren();
+      count.textContent = "家主専用リンクを開いてください。";
+      refresh.disabled = false;
+      return;
+    }
+
+    try {
+      const result = await callRpc("get_household_owned_items", { p_token: token });
+      if (current !== sequence) return;
+      if (!result || result.valid_token !== true || !Array.isArray(result.items)) {
+        throw new Error("Invalid owner bookshelf response");
+      }
+      items = result.items;
+      const total = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+      count.textContent = items.length + "種類・合計" + total + "冊";
+      render();
+    } catch (error) {
+      if (current !== sequence) return;
+      console.error("Owner bookshelf load failed", error);
+      list.replaceChildren();
+      more.classList.add("hidden");
+      count.textContent = "本棚を読み込めませんでした。「更新」を押してください。";
+    } finally {
+      if (current === sequence) refresh.disabled = false;
+    }
+  }
+
+  refresh.addEventListener("click", load);
+  more.addEventListener("click", () => { expanded = !expanded; render(); });
+  document.addEventListener("kore-motteru:owned-items-updated", load);
+  document.addEventListener("kore-motteru:handoff-updated", load);
+  window.addEventListener("hashchange", load);
+  window.addEventListener("pageshow", (event) => { if (event.persisted) load(); });
+  load();
+})();
