@@ -32,6 +32,7 @@ OWNERトークンとSHOPトークンは分離したまま維持し、見た目�
 - `docs/role-model.md`
 - `docs/current-roadmap.md`
 - `docs/regression-checklist.md`
+- `docs/environment-range-design.md` — 最高/最低の環境と結果から、fallback・支援範囲・課金境界を決める設計原則
 
 ## 現在のGREEN
 
